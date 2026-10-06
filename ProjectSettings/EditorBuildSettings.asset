@@ -1,0 +1,13 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1045 &1
+EditorBuildSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Droply/Scenes/Meadow.unity
+    guid: f635acea64591c2478d608597e126890
+  m_configObjects:
+    com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 394d6c44b12b4a747927e0d10fadeca5, type: 2}
+    com.unity.xr.openxr.settings4: {fileID: 11400000, guid: ebd514343a8151841a0df8b161c0540b, type: 2}
