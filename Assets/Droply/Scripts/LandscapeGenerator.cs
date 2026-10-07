@@ -1,18 +1,28 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Debug = UnityEngine.Debug;
 
 namespace Droply.Landscape
 {
     /// <summary>
-    /// Unity side of the landscape. The composition (terrain, path, trees, meadow details, distance layers) is built as plain data by
-    /// <see cref="LandscapeBuilder"/> from <see cref="Plan"/>; this component turns that data into merged static meshes (one per material, a few dozen draw calls,
-    /// no per-frame script work), materials, the warm side light, the trilight ambient and the sky.
+    /// Unity side of the landscape. The composition (terrain, path, trees, meadow details, distance layers, sky) is built as plain data by
+    /// <see cref="LandscapeBuilder"/> from <see cref="Plan"/>, with the light already baked into the vertex colours (<see cref="Lighting"/>).
+    /// This component turns that data into static meshes (one per layer, a few dozen draw calls, no per-frame script work).
+    /// <para>
+    /// Baked pipeline (normal case): every layer is drawn with the tiny unlit shader "Droply/Vertex Colour Unlit": no lights, no shadow maps, no skybox, no textures.
+    /// Lit fallback (only if that shader is missing or not supported on the device): URP Lit with one flat colour per material, a real warm sun with soft shadows,
+    /// a trilight ambient and the scene's skybox. It looks plainer and is not checked on a headset either.
+    /// </para>
     /// </summary>
     public sealed class LandscapeGenerator : MonoBehaviour
     {
-        // Assigned by "Droply > Generate and configure landscape". A serialized reference keeps the shader in player builds;
+        public const string BakedShaderName = "Droply/Vertex Colour Unlit";
+
+        // Assigned by "Droply > Generate and configure landscape" (and stored in the scene). A serialized reference keeps a shader in player builds;
         // Shader.Find alone can fail there because nothing in a scene references the shader.
+        public Shader vertexColorShader;
         public Shader litShader;
         public Shader unlitShader;
 
@@ -27,43 +37,71 @@ namespace Droply.Landscape
         void Awake()
         {
             if (transform.Find("Generated Landscape") != null) return;
+            var watch = Stopwatch.StartNew();
             SceneData data = LandscapeBuilder.Build();
+            long built = watch.ElapsedMilliseconds;
             var content = new GameObject("Generated Landscape").transform;
             content.SetParent(transform, false);
+            Shader baked = BakedShader();
+            if (baked != null) CreateBaked(data, content, baked);
+            else CreateLit(data, content);
+            ConfigureCamera(baked != null);
+            // Visible in logcat on the headset (adb logcat -s Unity): the real build time on the device.
+            Debug.Log("Droply landscape: " + data.TriangleCount + " triangles in " + data.Layers.Count + " layers; composition + light bake " + built + " ms (bake " +
+                      data.BakeMilliseconds + " ms), objects " + (watch.ElapsedMilliseconds - built) + " ms; " + (baked != null ? "baked vertex lighting" : "lit fallback (vertex colour shader missing or unsupported)"));
+        }
+
+        Shader BakedShader()
+        {
+            Shader shader = vertexColorShader != null ? vertexColorShader : Shader.Find(BakedShaderName);
+            return shader != null && shader.isSupported ? shader : null;
+        }
+
+        // ---- baked pipeline ---------------------------------------------------------------------------------------------------------
+
+        void CreateBaked(SceneData data, Transform parent, Shader shader)
+        {
+            // The colour of everything is in the vertices, so four materials are enough: solid, two-sided (blades, petals), sky and sun disc.
+            // Sky and sun are drawn first and write no depth, so everything else simply covers them.
+            Material solid = BakedMaterial(shader, "Baked solid", CullMode.Back, true, -1);
+            Material twoSided = BakedMaterial(shader, "Baked two-sided", CullMode.Off, true, -1);
+            Material sky = BakedMaterial(shader, "Sky", CullMode.Off, false, (int)RenderQueue.Background);
+            Material sun = BakedMaterial(shader, "Sun", CullMode.Off, false, (int)RenderQueue.Background + 1);
+            foreach (var layer in data.Layers)
+            {
+                Material material = layer.Material == Mat.Sky ? sky : layer.Material == Mat.SunDisc ? sun : Palette.DoubleSided(layer.Material) ? twoSided : solid;
+                // Colours instead of normals: the shader reads the first and never the second (position + colour = 16 bytes per vertex, position + normal would be 24).
+                AddRenderer(layer, parent, material, CreateMesh(layer.Mesh, layer.Name, true), false, false);
+            }
+        }
+
+        static Material BakedMaterial(Shader shader, string name, CullMode cull, bool depthWrite, int queue)
+        {
+            var material = new Material(shader) { name = name };
+            if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", Color.white);
+            if (material.HasProperty("_Cull")) material.SetFloat("_Cull", (float)cull);
+            if (material.HasProperty("_ZWrite")) material.SetFloat("_ZWrite", depthWrite ? 1f : 0f);
+            if (queue >= 0) material.renderQueue = queue;
+            return material;
+        }
+
+        // ---- lit fallback -------------------------------------------------------------------------------------------------------------
+
+        void CreateLit(SceneData data, Transform parent)
+        {
             var materials = new Dictionary<Mat, Material>();
-            foreach (var layer in data.Layers) CreateLayer(layer, content, materials);
-            ConfigureLight(content);
+            foreach (var layer in data.Layers)
+            {
+                if (Palette.BakedOnly(layer.Material)) continue; // the sky dome and the sun disc: here a skybox and a real light do their job
+                Material material;
+                if (!materials.TryGetValue(layer.Material, out material)) { material = CreateLitMaterial(layer.Material); materials[layer.Material] = material; }
+                AddRenderer(layer, parent, material, CreateMesh(layer.Mesh, layer.Name, false), layer.CastShadows, !Palette.Unlit(layer.Material));
+            }
+            ConfigureLight(parent);
             ConfigureSky();
-            ConfigureCamera();
         }
 
-        void CreateLayer(MeshLayer layer, Transform parent, Dictionary<Mat, Material> materials)
-        {
-            Material material;
-            if (!materials.TryGetValue(layer.Material, out material)) { material = CreateMaterial(layer.Material); materials[layer.Material] = material; }
-            var go = new GameObject(layer.Name);
-            go.transform.SetParent(parent, false);
-            go.AddComponent<MeshFilter>().sharedMesh = CreateMesh(layer.Mesh, layer.Name);
-            var renderer = go.AddComponent<MeshRenderer>();
-            renderer.sharedMaterial = material;
-            renderer.shadowCastingMode = layer.CastShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
-            renderer.receiveShadows = !Palette.Unlit(layer.Material);
-            renderer.lightProbeUsage = LightProbeUsage.Off;
-            renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
-        }
-
-        static Mesh CreateMesh(MeshData data, string name)
-        {
-            var mesh = new Mesh { name = name, indexFormat = data.Vertices.Length > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16 };
-            mesh.vertices = data.Vertices;
-            mesh.normals = data.Normals;
-            mesh.triangles = data.Triangles;
-            mesh.RecalculateBounds();
-            mesh.UploadMeshData(true); // the CPU copy is not needed again: saves memory on the headset
-            return mesh;
-        }
-
-        Material CreateMaterial(Mat id)
+        Material CreateLitMaterial(Mat id)
         {
             bool unlit = Palette.Unlit(id);
             Shader shader = unlit ? unlitShader : litShader;
@@ -120,13 +158,51 @@ namespace Droply.Landscape
             RenderSettings.skybox = sky;
         }
 
-        static void ConfigureCamera()
+        // ---- shared ---------------------------------------------------------------------------------------------------------------------
+
+        static void AddRenderer(MeshLayer layer, Transform parent, Material material, Mesh mesh, bool castShadows, bool receiveShadows)
+        {
+            var go = new GameObject(layer.Name);
+            go.transform.SetParent(parent, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = material;
+            renderer.shadowCastingMode = castShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
+            renderer.receiveShadows = receiveShadows;
+            renderer.lightProbeUsage = LightProbeUsage.Off;
+            renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+        }
+
+        /// <summary>One static mesh. <paramref name="baked"/>: vertex colours (final colour of each vertex), otherwise normals (the lit fallback computes its own light).</summary>
+        static Mesh CreateMesh(MeshData data, string name, bool baked)
+        {
+            var mesh = new Mesh { name = name, indexFormat = data.Vertices.Length > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16 };
+            mesh.vertices = data.Vertices;
+            if (baked) mesh.colors32 = data.Colors;
+            else mesh.normals = data.Normals;
+            mesh.triangles = data.Triangles;
+            mesh.RecalculateBounds();
+            mesh.UploadMeshData(true); // the CPU copy is not needed again: saves memory on the headset
+            return mesh;
+        }
+
+        /// <summary>
+        /// Camera for both pipelines. Baked: the dome is the sky, so the camera only clears to the horizon colour (nothing but the dome shows it).
+        /// Far plane 340 m: the dome is 325 m away and the farthest hill layer about 290 m.
+        /// </summary>
+        static void ConfigureCamera(bool baked)
         {
             var camera = Camera.main;
             if (camera == null) return;
-            camera.clearFlags = CameraClearFlags.Skybox;
             camera.nearClipPlane = .1f;
-            camera.farClipPlane = 340f; // the farthest hill layer is about 290 m away
+            camera.farClipPlane = 340f;
+            if (baked)
+            {
+                camera.clearFlags = CameraClearFlags.SolidColor;
+                camera.backgroundColor = Palette.HorizonColor;
+                RenderSettings.fog = false;
+            }
+            else camera.clearFlags = CameraClearFlags.Skybox;
         }
     }
 }

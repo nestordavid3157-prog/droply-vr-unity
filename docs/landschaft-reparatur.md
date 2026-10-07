@@ -1,8 +1,8 @@
-# Reparatur der Landschaft (2026-10-07)
+# Reparatur und Grafik der Landschaft (2026-10-07)
 
-Auftrag: der „Reparaturprompt“ des Betreibers. Die Landschaft war ein dichter, zufällig gefüllter Low-Poly-Wald; sie soll eine bewusst komponierte, ruhige, offene Naturwelt für die Quest 3S sein. **Reparatur durch Reduktion und Neuplatzierung, nicht durch mehr Objekte.** Was bleibt: Projekt, URP-/OpenXR-Setup, Menübefehle, Szene, Ablauf „Generate → Validate“.
+Auftrag: der „Reparaturprompt“ des Betreibers, danach „die Grafik muss auf der App verbessert werden“. Die Landschaft war ein dichter, zufällig gefüllter Low-Poly-Wald; sie soll eine bewusst komponierte, ruhige, offene Naturwelt für die Quest 3S sein, die dem Konzeptbild (`konzept-landschaft.png`) in Stimmung, Staffelung und Farbe folgt. **Reparatur durch Reduktion und Neuplatzierung, danach Licht, Farbe und Detail, nicht durch mehr Objekte.** Was bleibt: Projekt, URP-/OpenXR-Setup, Menübefehle, Szene, Ablauf „Generate → Validate“.
 
-**Nichts davon wurde in Unity oder an einer Quest geprüft** (siehe unten, „Nicht geprüft“). Geprüft wurde mit einem Werkzeug außerhalb von Unity: derselbe C#-Code baut die Szene, Checks messen die Regeln, eine Vorschau zeigt sie aus Augenhöhe.
+**Nichts davon wurde in Unity oder an einer Quest geprüft** (siehe Abschnitt 6). Geprüft wurde mit einem Werkzeug außerhalb von Unity: derselbe C#-Code baut die Szene und bäckt das Licht, Checks messen die Regeln, eine Vorschau zeigt genau die gebackenen Vertexfarben aus Augenhöhe.
 
 ## 1. Analyse der alten Szene (aus dem Code gerechnet, nicht gemessen)
 
@@ -19,57 +19,113 @@ Auftrag: der „Reparaturprompt“ des Betreibers. Die Landschaft war ein dichte
 | Ferne | Hügel als Ellipsoide bis z = 168, Gelände endet bei 208, nichts hinter dem Betrachter | sichtbarer Geländerand, Blick zurück leer |
 | Technik | `InstancedLandscape` legt **jedes Bild neue Arrays an** (GC auf der Quest); Materialien per `Shader.Find` (kann im Player fehlen); ≈ 117.000 Dreiecke | Leistungs- und Build-Risiko |
 
-## 2. Was geändert wurde (nach den Phasen des Prompts)
+## 2. Erste Runde: die Reparatur (Komposition)
 
-**Struktur.** Layout und Geometrie sind jetzt **reiner C#-Code ohne Unity-Objekte** (`Assets/Droply/Scripts/Layout/`). Dieselben Dateien laufen im Spiel und im Prüfwerkzeug. `LandscapeGenerator` ist nur noch die Unity-Seite: Meshes, Materialien, Licht, Himmel, Kamera. `InstancedLandscape` entfällt: Jede Schicht ist **ein verschmolzenes statisches Mesh** (36 Schichten, keine Arbeit pro Bild, keine GC-Allokation).
+**Struktur.** Layout und Geometrie sind **reiner C#-Code ohne Unity-Objekte** (`Assets/Droply/Scripts/Layout/`). Dieselben Dateien laufen im Spiel und im Prüfwerkzeug. `LandscapeGenerator` ist nur noch die Unity-Seite. `InstancedLandscape` entfällt: Jede Schicht ist **ein verschmolzenes statisches Mesh**, keine Arbeit pro Bild, keine GC-Allokation.
 
-1. **Vegetation ausdünnen.** Wald ≈ 190 → 89 Bäume in Gruppen (Gruppe 5, Waldkante 26, vereinfachte Gruppen 58), Gras 175 → 46 Büschel in 9 kleinen Gruppen, Blumen 132 → 87 in 7 Inseln, **Dreiecke ≈ 117.000 → 40.790**. Nichts näher als 9 m außer Weg und Steinen (Gras ≥ 9 m, Blumen ≥ 12 m, Bäume ≥ 24 m).
-2. **Gelände.** Sanfte, entworfene Formen: Hügelchen links und rechts im Vordergrund, Kuppe unter der Baumgruppe, flache Senke, Rücken, den der Weg hinaufführt (Relief ≈ 3 m, steilster Punkt 8,8°). Am Standpunkt exakt eben (Höhe 0 = Boden-Ursprung). Ein Mesh über 600 m: fein (2 m) dort, wo komponiert wird, grob zum Horizont.
+1. **Vegetation ausdünnen.** Wald ≈ 190 → 89 Bäume in Gruppen (Gruppe 5, Waldkante 26, vereinfachte Gruppen 58), Gras und Blumen in Gruppen und Inseln statt gleichmäßig.
+2. **Gelände.** Sanfte, entworfene Formen: Hügelchen links und rechts im Vordergrund, Kuppe unter der Baumgruppe, flache Senke, Rücken, den der Weg hinaufführt. Am Standpunkt exakt eben (Höhe 0 = Boden-Ursprung). Ein Mesh über 600 m: fein (1,25 m) dort, wo komponiert wird, grob zum Horizont.
 3. **Weg.** Beginnt als schmale Zunge zu Füßen, wird 2,4 m breit (später 1,9 m), schwingt in einem S, hat unregelmäßige Ränder und einen dunkleren Randstreifen, liegt auf der gerenderten Gelände-Oberfläche. Nichts liegt darauf (Check).
-4. **Bäume neu gruppiert.** Eine Charaktergruppe aus 5 ungleichen Bäumen (Eiche 11 m, Eiche 8,6 m, Buche, junge Eiche, Fichte) 28–42 m links vom Weg: Kronen überlappen leicht, Stämme und Lücken bleiben sichtbar, kein Strich. Dazu 4 Büsche am Fuß.
-5. **Waldkante und Ferne.** Hero (826 Dreiecke je Baum) → Waldkante (221) → vereinfachte Gruppen (53) → Waldlinie (Silhouette) → drei Hügelschichten. Jede Schicht ragt über die vordere hinaus und ist blasser und blaugrüner; kein Nebel. Im Bereich des Weges sind Linie und Hügel abgesenkt: der Blick öffnet sich über den Rücken. Rundum 360°, kein Geländerand.
-6. **Farben.** Boden in drei ruhigen Tönen (warm besonnt, Wiese, kühler Schatten; im Vordergrund fast einfarbig, die Flecken wachsen mit der Entfernung), Sandweg, warm-braune Stämme, Eiche/Buche/Fichte in je drei Tönen (hell oben, blaugrüner Schatten unten), Steine warmgrau, kein Neon (Sättigung ≤ 0,62, geprüft).
-7. **Blumen und Steine.** 7 Inseln (Lavendel, Weiß, Gelb), jede mit 9–14 größeren Blüten (≈ 20 Dreiecke statt ≈ 260). 6 Steine: ein großer links im Vordergrund, einer rechts als Gegengewicht, die übrigen verstreut, abgerundet, im Boden versenkt.
-8. **Licht.** Warmes Seitenlicht von links, 26° hoch (lange weiche Schatten nach rechts), weiche Schatten, Trilight-Umgebung (blauer Himmel, grüner Boden) für blaugrüne Schatten. Kein Bloom, kein Nebel, keine Nachbearbeitung. Ferne Schichten und Wolken sind **Unlit** (flach, billig, unabhängig von Shader-Schlüsselwörtern).
-9. **Quest-Technik.** Verschmolzene Meshes (Quest-üblich), Schatten nur für Gruppe, Waldkante und Steine (≈ 11.000 Dreiecke), Terrain/Ferne/Gras/Blumen werfen keine, Meshes nach dem Hochladen nicht mehr lesbar (Speicher), keine Lichtsonden/Reflexionssonden. **Shader per Referenz in der Szene** (sonst können sie im Player fehlen). `HeadsetPose` fordert den **Boden-Ursprung** an, damit die Augenhöhe wirklich die Höhe über dem Boden ist (die Rig-Position setzt weiterhin keine Höhe).
+4. **Bäume neu gruppiert.** Eine Charaktergruppe aus 5 ungleichen Bäumen 28–45 m links vom Weg: Kronen überlappen leicht, Stämme und Lücken bleiben sichtbar, kein Strich.
+5. **Waldkante und Ferne.** Hero → Waldkante → vereinfachte Gruppen → Waldlinie (Silhouette) → drei Hügelschichten. Jede Schicht ragt über die vordere hinaus und ist blasser und blauer; kein Nebel. Im Bereich des Weges sind Linie und Hügel abgesenkt: der Blick öffnet sich über den Rücken. Rundum 360°.
+6. **Quest-Technik.** Verschmolzene Meshes, Meshes nach dem Hochladen nicht mehr lesbar (Speicher), keine Lichtsonden/Reflexionssonden, **Shader per Referenz in der Szene** (sonst können sie im Player fehlen). `HeadsetPose` fordert den **Boden-Ursprung** an, damit die Augenhöhe wirklich die Höhe über dem Boden ist (die Rig-Position setzt weiterhin keine Höhe).
 
 **Palmen:** es gibt keine. **Kegel/Weihnachtsbäume:** nicht vorhanden; Fichten sind ausgefranste, versetzte Etagen mit Unterseite (aus der Nähe geprüft).
 
-## 3. Abschlusskontrolle (die 20 Punkte des Prompts)
+## 3. Zweite Runde: Grafik der Quest-App
 
-„gemessen“ = ein Check in `LandscapeChecks` (läuft in Unity unter *Droply → Validate landscape* und außerhalb mit `dotnet run --project Tools/CompositionCheck`). „gesehen“ = in der Vorschau (three.js) angesehen, nicht in Unity. „Brille“ = nur in der Quest beurteilbar.
+### 3.1 Befund (Vergleich mit dem Konzeptbild, in der Vorschau)
+
+Die erste Runde war ruhig und offen, aber **matt**: ein stumpfes Olivgrün ohne Struktur, ein verschwommener Weg (Rand über ≈ 1 m verlaufen), Kronen wie Ballons mit großen glatten Flächen, kaum erkennbare Blumen (dunkel, winzig; die Blütenblätter waren falsch herum beleuchtet), kein sichtbarer Schatten, ein leerer Vordergrund ohne Tiefenhinweise, graugrüne statt blaue Ferne, Licht von links hinten (alles von vorn beleuchtet, Schatten verdeckt).
+
+### 3.2 Pipeline: das Licht ist in die Vertexfarben eingebacken
+
+Auf der Quest kosten echtes Licht und Schattenkarten GPU-Zeit, und das Sonnenlicht der ersten Runde (eine Schattenkarte mit 1.024 Pixeln, 60 m Reichweite) kennt keine Umgebungsverdeckung und reicht für lange Schatten nicht weit. Deshalb wird das Licht **einmal beim Bauen** berechnet und steht danach in den Vertexfarben (`Lighting.cs`, `Look.cs`):
+
+- **Farbe vor dem Licht** (`Look.cs`): Verläufe nach Material und Lage im Körper: Kronen unten kühl und dunkel, oben warm und hell (sonnengebleichte Spitzen), Gras am Fuß dunkel, an der Spitze hell, Weg in der Mitte hell und am Rand dunkler (abgenutzt, gefleckt), Wiese in weichen Flecken (kühler Schatten, frisches Grün, warmes Sonnengrün, trockenes Strohgelb, feine Maserung), Stämme und Steine mit etwas Moos am Fuß, Birkenrinde weiß mit dunklen Zeichen.
+- **Licht** (`Lighting.cs`): eine warme Sonne (28° hoch, von links und etwas von vorn: Schatten fallen nach rechts und zum Betrachter hin, die Kronen zeigen ihre helle Seite links, ihr Laub leuchtet auf der abgewandten Seite durch), Schatten aus Kugel-Verdeckern (jede Krone, jeder Busch, jeder Stein; je weiter der Verdecker, desto weicher der Rand, bei Wolken gedeckelt auf 40 m), Umgebungsverdeckung (dunkel unter Kronen und am Fuß von Stämmen und Steinen), Dreifarb-Umgebungslicht (Himmelblau oben, Grün unten: blaugrüne Schatten), Dunst zum Horizont (`Palette.HorizonColor`), sanftes Abregeln heller Flächen. Für das **Licht** wird die Neigung des Geländes verstärkt (×2,6; die Geometrie bleibt), damit jede Welle eine besonnte und eine beschattete Seite zeigt. Dünne beidseitige Flächen (Halme, Blüten) werden auf ihrer Oberseite beleuchtet, das Licht der Unterseite kommt durch das Blatt.
+- **Himmel** (`Sky.cs`): eine Kuppel (R = 325 m, 1.120 Dreiecke) und eine Sonnenscheibe (2,1°) in Vertexfarben, am Horizont genau die Dunstfarbe der fernen Schichten (kein Absatz), mit einem weichen warmen Schein um die Sonne (eingebackener Verlauf, kein Bloom, kein Lens-Flare). Ersetzt das Procedural-Skybox.
+- **Wolkenschatten**: eine Wolke hängt auf dem Sonnenstrahl durch einen Punkt der Wiese (`Plan.CloudAbove`), erscheint also neben der Sonne und wirft einen weichen Schatten auf die Wiese links vom Weg.
+- **Unity-Seite** (`LandscapeGenerator.cs`, `Shaders/VertexColorUnlit.shader`): vier Materialien (fest, beidseitig für Halme und Blüten, Himmel, Sonne), Meshes mit Vertexfarben statt Normalen (Position + Farbe 16 Byte je Vertex, mit Normale wären es 24), **keine Lichter, keine Schattenkarten, keine Skybox**, die Kamera löscht auf die Horizontfarbe. Der Shader (URP, unlit) wandelt die sRGB-Bytes in lineare Farbe, ist SRP-Batcher-kompatibel und trägt die Makros für Single-Pass-Instanced-Stereo. MSAA 4. **Rückfall:** fehlt der Shader oder wird er nicht unterstützt, nimmt der Generator das schlichtere URP-Lit-Aussehen (eine Farbe je Material, echte Sonne, Skybox).
+
+### 3.3 Gestaltung (was sich sichtbar geändert hat)
+
+- **Wiese:** wärmeres, leuchtendes Gelbgrün im Licht, kühles Blaugrün im Schatten, trockene Flecken; Korn in Blickrichtung; **Relief 3,0 → 3,6 m** (steilster Punkt 8,8° → 11,4°), im Licht verstärkt.
+- **Weg:** Rand nur noch eine Handbreit (≈ 0,1 m) weich statt ≈ 1 m, wandernde Ränder, gefleckter Sand, dunklerer Randstreifen.
+- **Bäume:** Eichen breiter und flacher (Laubmasse statt Ball), die großen nahen Lappen mit feinerer Facettierung (kleine kantige Blattklumpen). In der Gruppe ersetzt eine **weiße Birke** die Buche (hellster Stamm im Bild, frisches Gelbgrün). Büsche rundlicher und heller; **acht Büsche rahmen die Sicht** links und rechts in ≈ 30 m (ohne Stamm, sie schließen keine Sichtachse).
+- **Gras:** spitze Halme aus je einem Dreieck (wie im Konzeptbild), 16 bewusste Gruppen (88 Büschel, bis ≈ 0,9 m), 13 Büschel am Wegrand, ≈ 1.250 kleine **Flecken** in unregelmäßigen Feldern (dünner mit der Entfernung, nie ein Teppich, nicht auf Weg und Inseln), 14 Kiesel am Wegrand. Alles hat im Nahbereich eine Aufgabe: Tiefen- und Maßstabshinweise, die der Blick zum Lesen der Bodenebene braucht.
+- **Blumeninseln:** je ein grüner Hügel aus flachen Blattlappen mit Blatt-Büscheln am Rand, darüber 18–26 größere Blüten in drei Formen (Margerite, Hahnenfuß, **Lavendel-Ähre**), eine Hauptfarbe und bei den meisten eine zweite für ein Viertel der Blüten. Eine Insel liegt jetzt 14 m vor dem Betrachter. 164 Blüten auf 7 Inseln.
+- **Ferne:** Hügel höher und **blau** statt graugrün, Waldlinie mit runderen Kronen (Segmente 1 m, kleine Unebenheit, wandernde Helligkeit), sieben statt fünf Wolken.
+
+### 3.4 Messwerte (Rechner, nicht Quest)
+
+| Größe | Wert |
+|---|---|
+| Dreiecke / Vertices / Schichten (= Zeichenaufrufe) | 72.799 / 149.728 (≈ 2,3 MiB mit Position und Farbe) / 41 |
+| Bäume je Stufe (Dreiecke je Baum) | Gruppe 5 (1.680), Waldkante 26 (239), vereinfacht 58 (53) |
+| Licht einbacken | ≈ 0,24 s (511 Verdecker); ganzes Bauen ≈ 0,45 s auf einem Desktop, **auf der Quest unbekannt** (das Protokoll des Generators nennt sie) |
+| Offene Sichtachsen | 60 % (50 % mit den fernen Gruppen), breiteste 26°, 6 Gassen |
+
+### 3.5 Bewusst gelockerte eigene Prüfwerte (Begründung)
+
+Die Prüfwerte sind meine Auslegung des Reparaturprompts, nicht Vorgaben des Betreibers. Der Vordergrund war in der ersten Runde so leer, dass die Szene flach wirkte; in der VR liest das Auge die Bodenebene an nahen kleinen Dingen. Geändert (alles in `LandscapeChecks.cs`, vom `selftest` abgedeckt):
+
+| Prüfwert | vorher | jetzt |
+|---|---|---|
+| Gras nicht näher als | 9 m | 6 m (Wegrandbüschel 7 m, Flecken 3,5 m, Kiesel am Weg) |
+| Blumen nicht näher als | 12 m | 8 m |
+| Büschel in den ersten 20 m | ≤ 12 | ≤ 18 |
+| Büschel / Blumen insgesamt | ≤ 70 / ≤ 140 | ≤ 110 / ≤ 260 (zusätzlich Wegrandbüschel ≤ 30, Flecken ≤ 1.500, Kiesel ≤ 30) |
+| Steilster Punkt | ≤ 9° | ≤ 12° |
+| Sättigung | ≤ 0,62 für alles | ≤ 0,62 für Laub, Gras, Boden, Rinde, Stein; ≤ 0,8 für Blüten und ihre goldene Mitte |
+| Bäume nicht näher als | 24 m | unverändert |
+
+## 4. Abschlusskontrolle (die 20 Punkte des Prompts)
+
+„gemessen“ = ein Check in `LandscapeChecks` (läuft in Unity unter *Droply → Validate landscape* und außerhalb mit `dotnet run --project Tools/CompositionCheck`). „gesehen“ = in der Vorschau (three.js, gebackene Vertexfarben) angesehen, nicht in Unity. „Brille“ = nur in der Quest beurteilbar.
 
 | Punkt | Stand |
 |---|---|
-| Vordergrund ist offen | gemessen (Gras ≥ 9 m, Blumen ≥ 12 m, Bäume ≥ 24 m, höchstens 12 Büschel in 20 m) und gesehen |
+| Vordergrund ist offen | gemessen (Bäume ≥ 24 m, Büschel ≥ 6 m, ≤ 18 Büschel in 20 m), gesehen: nichts versperrt den Blick, aber Tiefenhinweise am Boden |
 | Weg ist klar sichtbar | gemessen (nichts darauf), gesehen; Brille |
-| Terrain ist nicht flach | gemessen (Relief 3,0 m, ≤ 8,8°, Standpunkt eben), gesehen |
+| Terrain ist nicht flach | gemessen (Relief 3,6 m, ≤ 11,4°, Standpunkt eben, Meshabweichung 0,08 m), gesehen (im Licht verstärkt) |
 | Bäume gruppiert, nicht zufällig | gemessen (3–7, nicht auf einer Linie, Kronen überlappen leicht), gesehen |
 | Keine Kegel-/Weihnachtsbaumformen | gesehen (Nahaufnahmen) |
 | Keine tropischen Palmenformen | gemessen (keine Palmenschicht), gesehen |
-| Waldkante hat Tiefenstaffelung | gemessen (Detail fällt: 826 > 221 > 53 Dreiecke je Baum), gesehen |
+| Waldkante hat Tiefenstaffelung | gemessen (Detail fällt: 1.680 > 239 > 53 Dreiecke je Baum), gesehen |
 | Ferne ist deutlich einfacher | gesehen; Brille |
-| Blumen gruppiert | gemessen (5–10 Inseln, ≥ 12 m vom Betrachter) |
-| Gras reduziert | gemessen (≤ 70 Büschel; 46) |
-| Freie Flächen vorhanden | gemessen (offene Sichtachsen 62 %, breiteste 28°; mit den fernen Gruppen 50 %) und gesehen |
-| Farben nicht nur Grün | gemessen (drei Bodentöne mit je 12–65 % der Wiese, Sättigung) und gesehen |
-| Schatten sind weich | **Brille/Unity** (weiche Schatten sind eingestellt, nicht gesehen) |
-| Keine störenden Kameraeffekte | Einstellung geprüft (keine Nachbearbeitung, kein Nebel, kein Bloom); Brille |
+| Blumen gruppiert | gemessen (5–10 Inseln, ≥ 8 m vom Betrachter), gesehen |
+| Gras reduziert | gemessen (88 Büschel in 16 Gruppen, Wegrand 13, Flecken 1.250 in Feldern, alle unter ihren Grenzen), gesehen: Gruppen und Felder, kein Teppich |
+| Freie Flächen vorhanden | gemessen (offene Sichtachsen 60 %, breiteste 26°; mit den fernen Gruppen 50 %) und gesehen |
+| Farben nicht nur Grün | gemessen (Bodentöne, Sättigung) und gesehen: Gelbgrün, Blaugrün, Sand, Blau, Lavendel, Gelb, Weiß |
+| Schatten sind weich | gemessen (Schattenwerte am Boden mit `probe`), gesehen (Vorschau); **Brille** |
+| Keine störenden Kameraeffekte | Einstellung geprüft (keine Nachbearbeitung, kein Nebel, kein Bloom, keine Vignette); der Sonnenschein ist ein Verlauf im Himmel, kein Effekt; Brille |
 | Maßstab wirkt menschlich | gemessen (1 Einheit = 1 m, Baumhöhen 4–12 m); Brille |
 | VR-Perspektive wirkt natürlich | **Brille** (Boden-Ursprung angefordert, ungeprüft) |
-| Keine unnötigen Mikrodetails | Dreiecke je Blume ≈ 20, je Büschel ≈ 24, Gelände fern grob; gemessen im Budget |
-| Quest-3S-Performance bleibt Priorität | Budget gemessen (≤ 80.000 Dreiecke, ≤ 26.000 mit Schatten, ≤ 60 Schichten), **Bildrate nicht gemessen** |
-| Wirkt nicht wie ein zufälliger Generator | gemessen (keine Reihen, kein Teppich; `selftest` lehnt die alte Anordnung ab), gesehen |
+| Keine unnötigen Mikrodetails | Dreiecke je Blume ≈ 20–35, je Fleck ≈ 6, je Kiesel 20; im Budget; die kleinen Dinge dienen dem Tiefenhinweis (3.3) |
+| Quest-3S-Performance bleibt Priorität | Budget gemessen (≤ 80.000 Dreiecke, ≤ 60 Schichten, ein trivialer Shader), **Bildrate und Bauzeit nicht gemessen** |
+| Wirkt nicht wie ein zufälliger Generator | gemessen (keine Reihen, kein Teppich; `selftest` lehnt die alte Anordnung und Teppiche ab), gesehen |
 | Wirkt wie eine bewusst gestaltete Landschaft | **Urteil in der Brille** |
 
-## 4. Vorschau (three.js, nicht Unitys Renderer)
+## 5. Vorschau (three.js, nicht Unitys Renderer)
 
-`docs/vorschau/`: `ansicht-geradeaus.jpg`, `-links`, `-rechts`, `-zurueck`, `-lageplan` (Baumstufen als Kreise: rot Gruppe, orange Waldkante, violett vereinfacht; weiße Punkte der Weg), `-baumgruppe`, `-waldkante`. Erzeugt aus Augenhöhe 1,65 m, 100° horizontal. Farben, Shader und Kantenglättung weichen von URP auf der Quest ab.
+`docs/vorschau/`: `ansicht-geradeaus.jpg`, `-links` (Sonne und Gruppe), `-rechts`, `-zurueck`, `-lageplan` (Baumstufen als Kreise: rot Gruppe, orange Waldkante, violett vereinfacht; weiße Punkte der Weg), `-baumgruppe`, `-waldkante`, `-blumeninsel`, `-weg`. Die Vorschau zeichnet die gebackenen Vertexfarben ohne Licht und mit derselben Umrechnung wie der Shader, Unterschiede zur Brille sind Kantenglättung, Anzeige und Optik. Aufnahme 1600 × 900 aus Augenhöhe 1,65 m, vertikal 70°, mit den Adressen (`Tools/Preview`, `python3 -m http.server`):
 
-## 5. Nicht geprüft / bewusst offen
+```
+geradeaus   index.html?yaw=0&pitch=0                                  links     ?yaw=-45&pitch=2
+rechts      ?yaw=45&pitch=2                                           zurueck   ?yaw=180&pitch=2
+lageplan    ?view=top&half=100&cz=48                                  weg       ?tx=1&ty=0&tz=8&px=-1&pz=2&eye=1.65&fov=55&pitch=-12
+baumgruppe  ?tx=-10&ty=4.5&tz=36&px=-1&pz=18&eye=1.65&fov=62          blumeninsel  ?tx=-6.4&ty=0.5&tz=12.6&px=-3&pz=7&eye=1.65&fov=55
+waldkante   ?tx=40&ty=5&tz=62&px=0&pz=0&eye=1.65&fov=42&yaw=0
+```
 
-- **Alles in Unity und an der Quest** (siehe `README.md`, Abschnitt „What has not been verified“). Der Spielcode kompiliert gegen die echten UnityEngine-Assemblies (2021.3-Schnittstelle, `Tools/CompileCheck`); `ProjectSetup.cs` braucht UnityEditor, URP und XR und wurde nur gelesen, nicht kompiliert.
-- Die Himmelsfarbe am Horizont (`Skybox/Procedural`) gegen die Dunstfarbe der fernen Schichten (`Palette.HorizonColor`) ist geschätzt; ein sichtbarer Absatz am Horizont ist möglich. Beide Werte stehen in `Palette.cs`.
-- Die Wolken sind flach gefärbt (zweifarbig nach Flächenrichtung), keine Beleuchtung.
+(`eye` ist die absolute Höhe; an Orten mit Geländehöhe darüber setzen.)
+
+## 6. Nicht geprüft / bewusst offen
+
+- **Alles in Unity und an der Quest** (siehe `README.md`, Abschnitt „What has not been verified“). Der Spielcode kompiliert gegen die echten UnityEngine-Assemblies (2021.3-Schnittstelle, `Tools/CompileCheck`); der Shader wurde nur auf Syntax geprüft (glslang, HLSL-Frontend, URP-Makros nachgebildet), **nicht von Unity übersetzt**; `ProjectSetup.cs` braucht UnityEditor, URP und XR und wurde nur gelesen. Szene und Grafikeinstellungen wurden von Hand um den Shader ergänzt; der Menübefehl schreibt sie sauber neu.
+- Die **Bauzeit auf der Quest** ist unbekannt (Desktop ≈ 0,45 s). Wenn sie stört: das Einbacken je Schicht parallel laufen lassen (die Schichten sind unabhängig) oder die Gruppen der fernen Schichten gröber backen.
+- **Sonnenschein und Sonnenscheibe** (2,1°) stehen links vorn, knapp außerhalb des Blickfelds beim Blick geradeaus; Größe und Stärke sind Geschmack (`Sky.cs`). **Himmelsverlauf:** Streifenbildung (Banding) auf den 8-Bit-Displays ist möglich; ein leichtes Rauschen im Shader würde sie verdecken (nicht gebaut).
+- Die Wolken sind flach gefärbt (zweifarbig nach Flächenrichtung), keine Beleuchtung; nur die eine Wolke neben der Sonne wirft Schatten.
 - Rücken und Gruppe sind für die Blickrichtung +z komponiert; hinter dem Betrachter ist die Wiese bewusst ruhig (Hügel, Waldlinie, zwei ferne Gruppen).
-- Eine Eichen-Variante mit Schaukeln im Wind, Gräser im Wind, Vögel: nicht gebaut (Prompt: keine unnötigen Details).
+- Bewegung (Gras im Wind, Vögel, Schwanken): nicht gebaut (Regeln: keine unnötigen Details, kein erzwungenes Bewegtbild).

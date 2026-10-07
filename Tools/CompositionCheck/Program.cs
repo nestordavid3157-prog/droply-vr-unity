@@ -10,19 +10,24 @@ namespace Droply.CompositionCheck
     /// <summary>
     /// dotnet run --project Tools/CompositionCheck                -> build the landscape, print the numbers, run the composition checks (exit code 1 on a violation)
     /// dotnet run --project Tools/CompositionCheck -- export f.json -> additionally write the scene for Tools/Preview
+    /// dotnet run --project Tools/CompositionCheck -- probe 26     -> baked ground colour along the line z = 26 (is the cast shadow where the geometry says it is?)
     /// </summary>
     static class Program
     {
         static int Main(string[] args)
         {
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest.Run();
+            if (args.Length >= 2 && args[0] == "probe") { Probe(LandscapeBuilder.Build(), float.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture)); return 0; }
             var watch = System.Diagnostics.Stopwatch.StartNew();
             SceneData data = LandscapeBuilder.Build();
             long ms = watch.ElapsedMilliseconds;
             bool deterministic = Checksum(data) == Checksum(LandscapeBuilder.Build());
             Console.WriteLine("Same input, same landscape (built twice, identical geometry): " + (deterministic ? "yes" : "NO"));
 
-            Console.WriteLine("Landscape built in " + ms + " ms: " + data.TriangleCount + " triangles in " + data.Layers.Count + " layers.");
+            int vertexTotal = 0;
+            foreach (var layer in data.Layers) vertexTotal += layer.Mesh.Vertices.Length;
+            Console.WriteLine("Landscape built in " + ms + " ms (light bake " + data.BakeMilliseconds + " ms, " + data.OccluderCount + " occluders): " + data.TriangleCount + " triangles, " + vertexTotal +
+                              " vertices (" + (vertexTotal * 16 / 1024) + " KiB with position and colour) in " + data.Layers.Count + " layers.");
             int shadow = 0;
             foreach (var layer in data.Layers) if (layer.CastShadows) shadow += layer.Mesh.TriangleCount;
             Console.WriteLine("  shadow-casting triangles: " + shadow);
@@ -32,7 +37,8 @@ namespace Droply.CompositionCheck
             var byTier = new Dictionary<TreeTier, int>();
             foreach (var t in data.Trees) { int n; byTier.TryGetValue(t.Tier, out n); byTier[t.Tier] = n + (t.Kind == TreeKind.Shrub ? 0 : 1); }
             Console.WriteLine("Trees: hero " + Get(byTier, TreeTier.Hero) + ", edge " + Get(byTier, TreeTier.Edge) + ", mid " + Get(byTier, TreeTier.Mid) +
-                              "; grass tufts " + data.GrassClumps.Count + ", flowers " + data.Flowers.Count + " on " + data.IslandCenters.Count + " islands, stones " + data.Rocks.Count);
+                              "; grass tufts " + data.GrassClumps.Count + " (+ " + data.EdgeTufts.Count + " at the path edge, " + data.FleckCount + " flecks), flowers " + data.Flowers.Count + " on " +
+                              data.IslandCenters.Count + " islands, stones " + data.Rocks.Count + " (+ " + data.Pebbles.Count + " pebbles)");
             Console.WriteLine("Triangles per tree: hero " + LandscapeChecks.AverageTriangles(data, TreeTier.Hero).ToString("0") + ", edge " +
                               LandscapeChecks.AverageTriangles(data, TreeTier.Edge).ToString("0") + ", mid " + LandscapeChecks.AverageTriangles(data, TreeTier.Mid).ToString("0"));
             float share, widest; int corridors;
@@ -52,6 +58,20 @@ namespace Droply.CompositionCheck
             Console.WriteLine("Composition checks: " + violations.Count + " violation(s):");
             foreach (string v in violations) Console.WriteLine("  - " + v);
             return 1;
+        }
+
+        /// <summary>Prints the baked ground colour (sRGB) of the ground vertices near the line z = <paramref name="z"/>, from x = -20 to 20.</summary>
+        static void Probe(SceneData data, float z)
+        {
+            MeshLayer ground = data.Layers[0];
+            Console.WriteLine("Ground colours near z = " + z + " (x: r g b):");
+            var rows = new SortedDictionary<float, Color32>();
+            for (int i = 0; i < ground.Mesh.Vertices.Length; i++)
+            {
+                Vector3 v = ground.Mesh.Vertices[i];
+                if (Math.Abs(v.z - z) < .65f && v.x >= -20f && v.x <= 20f) rows[(float)Math.Round(v.x, 2)] = ground.Mesh.Colors[i];
+            }
+            foreach (var pair in rows) Console.WriteLine("  x " + pair.Key.ToString("0.00").PadLeft(6) + ": " + pair.Value.r.ToString().PadLeft(3) + " " + pair.Value.g.ToString().PadLeft(3) + " " + pair.Value.b.ToString().PadLeft(3));
         }
 
         /// <summary>Order-sensitive checksum over every vertex and triangle index of every layer.</summary>
@@ -93,6 +113,14 @@ namespace Droply.CompositionCheck
 
         static string Number(float f) { return f.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture); }
 
+        static string Base64(Color32[] values)
+        {
+            var bytes = new byte[values.Length * 4];
+            for (int i = 0; i < values.Length; i++) { bytes[i * 4] = values[i].r; bytes[i * 4 + 1] = values[i].g; bytes[i * 4 + 2] = values[i].b; bytes[i * 4 + 3] = 255; }
+            return Convert.ToBase64String(bytes);
+        }
+
+        /// <summary>Layers with their baked vertex colours (sRGB bytes); Tools/Preview draws them unlit, which is what the baked pipeline draws on the headset.</summary>
         static void Export(SceneData data, string file)
         {
             var sb = new StringBuilder();
@@ -100,19 +128,13 @@ namespace Droply.CompositionCheck
             for (int i = 0; i < data.Layers.Count; i++)
             {
                 var l = data.Layers[i];
-                Color32 c = Palette.Color(l.Material);
                 if (i > 0) sb.Append(',');
-                sb.Append("{\"name\":\"" + l.Name + "\",\"material\":\"" + l.Material + "\",\"color\":[" + c.r + "," + c.g + "," + c.b + "],\"shadows\":" + (l.CastShadows ? "true" : "false") +
-                          ",\"double\":" + (Palette.DoubleSided(l.Material) ? "true" : "false") + ",\"unlit\":" + (Palette.Unlit(l.Material) ? "true" : "false") +
-                          ",\"positions\":\"" + Base64(l.Mesh.Vertices) + "\",\"normals\":\"" + Base64(l.Mesh.Normals) + "\",\"indices\":\"" + Base64(l.Mesh.Triangles) + "\"}");
+                sb.Append("{\"name\":\"" + l.Name + "\",\"material\":\"" + l.Material + "\",\"sky\":" + (Palette.BakedOnly(l.Material) ? "true" : "false") +
+                          ",\"double\":" + (Palette.DoubleSided(l.Material) ? "true" : "false") +
+                          ",\"positions\":\"" + Base64(l.Mesh.Vertices) + "\",\"colors\":\"" + Base64(l.Mesh.Colors) + "\",\"indices\":\"" + Base64(l.Mesh.Triangles) + "\"}");
             }
-            sb.Append("],\"sun\":{\"pitch\":" + Number(Palette.SunPitch) + ",\"yaw\":" + Number(Palette.SunYaw) + ",\"intensity\":" + Number(Palette.SunIntensity) +
-                      ",\"color\":[" + Number(Palette.SunColor.r) + "," + Number(Palette.SunColor.g) + "," + Number(Palette.SunColor.b) + "]},");
-            sb.Append("\"ambient\":{\"sky\":[" + Number(Palette.AmbientSky.r) + "," + Number(Palette.AmbientSky.g) + "," + Number(Palette.AmbientSky.b) + "],\"equator\":[" +
-                      Number(Palette.AmbientEquator.r) + "," + Number(Palette.AmbientEquator.g) + "," + Number(Palette.AmbientEquator.b) + "],\"ground\":[" +
-                      Number(Palette.AmbientGround.r) + "," + Number(Palette.AmbientGround.g) + "," + Number(Palette.AmbientGround.b) + "]},");
             Color32 h = Palette.HorizonColor;
-            sb.Append("\"horizon\":[" + h.r + "," + h.g + "," + h.b + "],\"skyTint\":[" + Number(Palette.SkyTint.r) + "," + Number(Palette.SkyTint.g) + "," + Number(Palette.SkyTint.b) + "],");
+            sb.Append("],\"horizon\":[" + h.r + "," + h.g + "," + h.b + "],");
             sb.Append("\"path\":[");
             for (float s = 0f; s <= data.Path.Length; s += 4f)
             {

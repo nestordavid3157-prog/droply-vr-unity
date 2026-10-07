@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace Droply.Landscape
 {
-    public enum TreeKind { Oak, Beech, Spruce, Shrub, Blob, BlobSpruce }
+    public enum TreeKind { Oak, Beech, Birch, Spruce, Shrub, Blob, BlobSpruce }
 
     /// <summary>Where in the depth of the scene a tree stands. Detail falls with distance: Hero > Edge > Mid > Far.</summary>
     public enum TreeTier { Hero, Edge, Mid, Far }
@@ -25,17 +25,40 @@ namespace Droply.Landscape
         public MeshData Mesh;
     }
 
-    /// <summary>Collects geometry per material (and per shadow class), so the whole landscape becomes a handful of merged static meshes.</summary>
+    /// <summary>
+    /// Collects geometry per material (and per shadow class), so the whole landscape becomes a handful of merged static meshes, and the occluders that
+    /// <see cref="Lighting"/> uses for soft shadows and ambient occlusion. <see cref="CurrentOwner"/> is stamped on every vertex built while it is set.
+    /// </summary>
     public sealed class LayerSet
     {
         readonly SortedDictionary<int, MeshBuilder> builders = new SortedDictionary<int, MeshBuilder>();
+        int owners;
+
+        public readonly List<Occluder> Occluders = new List<Occluder>();
+
+        /// <summary>0 = the ground and meadow details; a tree, bush or stone sets its own number while it is built.</summary>
+        public int CurrentOwner;
+
+        public int NewOwner() { return ++owners; }
 
         public MeshBuilder Get(Mat material, bool shadows)
         {
             int key = (int)material * 2 + (shadows ? 1 : 0);
             MeshBuilder builder;
             if (!builders.TryGetValue(key, out builder)) { builder = new MeshBuilder(); builders[key] = builder; }
+            builder.Owner = CurrentOwner;
             return builder;
+        }
+
+        /// <summary>A sphere that blocks the sun and the sky: a crown lobe is registered with its geometric-mean radius.</summary>
+        public void AddOccluder(Vector3 center, float radius, float density)
+        {
+            Occluders.Add(new Occluder { Center = center, Radius = radius, Density = density, Owner = CurrentOwner });
+        }
+
+        public void AddOccluder(Vector3 center, Vector3 radii, float density)
+        {
+            AddOccluder(center, Mathf.Pow(radii.x * radii.y * radii.z, 1f / 3f) * .95f, density);
         }
 
         public int TriangleCount
@@ -66,16 +89,19 @@ namespace Droply.Landscape
         public static TreeRecord Build(LayerSet layers, TreeKind kind, TreeTier tier, Vector3 position, float height, float spread, Rng rng, Mat haze)
         {
             int before = layers.TriangleCount;
+            layers.CurrentOwner = layers.NewOwner();
             bool shadows = tier == TreeTier.Hero || tier == TreeTier.Edge;
             switch (kind)
             {
                 case TreeKind.Oak: Oak(layers, position, height, spread, rng, shadows, tier == TreeTier.Hero ? 1 : 0, tier == TreeTier.Hero ? 11 : 7); break;
                 case TreeKind.Beech: Beech(layers, position, height, spread, rng, shadows, tier == TreeTier.Hero ? 1 : 0); break;
+                case TreeKind.Birch: Birch(layers, position, height, spread, rng, shadows, tier == TreeTier.Hero ? 1 : 0); break;
                 case TreeKind.Spruce: Spruce(layers, position, height, spread, rng, shadows, tier == TreeTier.Hero ? 7 : 6, tier == TreeTier.Hero ? 6 : 5); break;
-                case TreeKind.Shrub: Shrub(layers, position, spread, rng, shadows); break;
+                case TreeKind.Shrub: Shrub(layers, position, spread, rng, shadows, spread > 1.5f ? 1 : 0); break;
                 case TreeKind.Blob: Blob(layers, position, height, spread, rng, haze); break;
                 default: BlobSpruce(layers, position, height, spread, rng, haze); break;
             }
+            layers.CurrentOwner = 0;
             return new TreeRecord { Position = position, Height = height, Spread = spread, Kind = kind, Tier = tier, Triangles = layers.TriangleCount - before };
         }
 
@@ -84,6 +110,12 @@ namespace Droply.Landscape
             // High lobes catch the sun (light), low ones sit in blue-green shade (dark); a few swap with a neighbour so it never looks banded.
             float g = f + rng.Signed() * .1f;
             return g > .62f ? top : g > .3f ? mid : dark;
+        }
+
+        static void Crown(LayerSet layers, bool shadows, Mat mat, Vector3 center, Vector3 radii, Rng rng, float roughness, int subdivisions, float flatten, float density)
+        {
+            Shapes.Lobe(layers.Get(mat, shadows), center, radii, Basis.Euler(rng.Value() * 6.28f, rng.Signed() * .3f, rng.Signed() * .3f), rng, roughness, subdivisions, flatten);
+            layers.AddOccluder(center, radii, density);
         }
 
         /// <summary>Broad oak: short thick trunk, three limbs, a wide dome of unequal lobes with small ones at the limb tips.</summary>
@@ -111,14 +143,14 @@ namespace Droply.Landscape
                 float az = rng.Value() * Mathf.PI * 2f, rho = k == 0 ? spread * .1f : spread * rng.Range(.34f, .8f);
                 float f = k == 0 ? .86f : Mathf.Clamp01(rng.Range(.12f, .74f) + (1f - rho / spread) * .18f);
                 Vector3 c = new Vector3(fork.x + Mathf.Cos(az) * rho, pos.y + yc - hh + f * 2f * hh, fork.z + Mathf.Sin(az) * rho);
-                float rl = spread * (k == 0 ? .58f : rng.Range(.42f, .6f)), ry = rl * rng.Range(.8f, 1.02f);
-                Mat m = CrownMaterial(f, rng, Mat.OakTop, Mat.OakMid, Mat.OakDark);
-                Shapes.Lobe(layers.Get(m, shadows), c, new Vector3(rl, ry, rl), Basis.Euler(rng.Value() * 6.28f, rng.Signed() * .3f, rng.Signed() * .3f), rng, .2f, subdivisions, .7f);
+                float rl = spread * (k == 0 ? .58f : rng.Range(.42f, .6f)), ry = rl * rng.Range(.66f, .88f);   // broad and a little flat, like a mass of foliage, not a ball
+                int detail = subdivisions > 0 && rl > spread * .5f ? subdivisions + 1 : subdivisions;           // the big near lobes get finer facets (small angular leaf chunks)
+                Crown(layers, shadows, CrownMaterial(f, rng, Mat.OakTop, Mat.OakMid, Mat.OakDark), c, new Vector3(rl, ry, rl), rng, detail > subdivisions ? .17f : .2f, detail, .55f, .85f);
             }
             foreach (Vector3 tip in tips)
             {
                 float rl = spread * rng.Range(.2f, .3f);
-                Shapes.Lobe(layers.Get(Mat.OakMid, shadows), tip + new Vector3(0f, rl * .5f, 0f), new Vector3(rl, rl * .75f, rl), Basis.Euler(rng.Value() * 6.28f, 0f, 0f), rng, .22f, 0, .6f);
+                Crown(layers, shadows, Mat.OakMid, tip + new Vector3(0f, rl * .5f, 0f), new Vector3(rl, rl * .75f, rl), rng, .22f, 0, .6f, .75f);
             }
         }
 
@@ -151,13 +183,49 @@ namespace Droply.Landscape
                 float rho = k == 0 ? 0f : spread * rng.Range(.12f, .6f) * (1f - .3f * f);
                 Vector3 c = new Vector3(fork.x + Mathf.Cos(az) * rho, pos.y + yc - hh + f * 2f * hh, fork.z + Mathf.Sin(az) * rho);
                 float rl = spread * (k == 0 ? .56f : rng.Range(.5f, .7f)) * (1f - .2f * f), ry = rl * rng.Range(.8f, 1.05f);
-                Shapes.Lobe(layers.Get(CrownMaterial(f, rng, Mat.BeechTop, Mat.BeechMid, Mat.BeechDark), shadows), c, new Vector3(rl, ry, rl),
-                    Basis.Euler(rng.Value() * 6.28f, rng.Signed() * .3f, rng.Signed() * .3f), rng, .2f, subdivisions, .7f);
+                Crown(layers, shadows, CrownMaterial(f, rng, Mat.BeechTop, Mat.BeechMid, Mat.BeechDark), c, new Vector3(rl, ry, rl), rng, .2f, subdivisions, .7f, .85f);
             }
             foreach (Vector3 tip in tips)
             {
                 float rl = spread * rng.Range(.3f, .4f);
-                Shapes.Lobe(layers.Get(Mat.BeechMid, shadows), tip + new Vector3(0f, rl * .3f, 0f), new Vector3(rl, rl * .85f, rl), Basis.Euler(rng.Value() * 6.28f, 0f, 0f), rng, .22f, 0, .65f);
+                Crown(layers, shadows, Mat.BeechMid, tip + new Vector3(0f, rl * .3f, 0f), new Vector3(rl, rl * .85f, rl), rng, .22f, 0, .65f, .75f);
+            }
+        }
+
+        /// <summary>
+        /// Birch, the colour accent: a slender white trunk with dark marks that leans a little, a few thin limbs, and a light, airy, narrow crown of small lobes in
+        /// fresh yellow-green. Lighter and less dense than the other trees (lower shadow density).
+        /// </summary>
+        static void Birch(LayerSet layers, Vector3 pos, float h, float spread, Rng rng, bool shadows, int subdivisions)
+        {
+            var bark = layers.Get(Mat.BirchBark, shadows);
+            float r0 = Mathf.Max(.06f, .018f * h);
+            float lean = rng.Signed() * .5f, lean2 = rng.Signed() * .5f;
+            Vector3 top = pos + new Vector3(lean, .78f * h, lean2);
+            Shapes.Tube(bark, new[] { pos + Vector3.down * .3f, pos + new Vector3(lean * .15f, .25f * h, lean2 * .1f), pos + new Vector3(lean * .55f, .52f * h, lean2 * .5f), top },
+                new[] { r0 * 1.35f, r0, r0 * .75f, r0 * .45f }, 6, rng, .05f, false);
+            var tips = new List<Vector3>();
+            float yaw0 = rng.Value() * Mathf.PI * 2f;
+            for (int i = 0; i < 3; i++)
+            {
+                float t = .42f + .17f * i, yaw = yaw0 + i * 2.1f + rng.Signed() * .4f, elev = rng.Range(.55f, .95f), len = spread * rng.Range(.8f, 1.2f);
+                Vector3 start = Vector3.Lerp(pos, top, t / .78f);
+                Vector3 dir = new Vector3(Mathf.Cos(yaw) * Mathf.Cos(elev), Mathf.Sin(elev), Mathf.Sin(yaw) * Mathf.Cos(elev));
+                Vector3 end = start + dir * len;
+                Shapes.Tube(bark, new[] { start, start + dir * (len * .5f), end }, new[] { r0 * .42f, r0 * .28f, r0 * .1f }, 4, rng, .06f, true);
+                tips.Add(end);
+            }
+            for (int k = 0; k < 7; k++)
+            {
+                float f = k == 0 ? .95f : rng.Range(.05f, .85f), az = rng.Value() * Mathf.PI * 2f, rho = k == 0 ? 0f : spread * rng.Range(.2f, .75f) * (1f - .35f * f);
+                Vector3 c = new Vector3(top.x + Mathf.Cos(az) * rho, pos.y + (.5f + .5f * f) * h * .96f, top.z + Mathf.Sin(az) * rho);
+                float rl = spread * rng.Range(.34f, .52f), ry = rl * rng.Range(1f, 1.3f);
+                Crown(layers, shadows, CrownMaterial(f, rng, Mat.BirchTop, Mat.BirchMid, Mat.BirchDark), c, new Vector3(rl, ry, rl), rng, .22f, subdivisions, .7f, .7f);
+            }
+            foreach (Vector3 tip in tips)
+            {
+                float rl = spread * rng.Range(.22f, .3f);
+                Crown(layers, shadows, Mat.BirchMid, tip + new Vector3(0f, rl * .4f, 0f), new Vector3(rl, rl * .9f, rl), rng, .22f, 0, .65f, .65f);
             }
         }
 
@@ -174,19 +242,25 @@ namespace Droply.Landscape
                 if (rng.Value() < .15f) m = m == Mat.SpruceDark ? Mat.SpruceMid : Mat.SpruceDark;
                 Vector3 c = pos + new Vector3(rng.Signed() * radius * .12f, y, rng.Signed() * radius * .12f);
                 Shapes.Tier(layers.Get(m, shadows), c, radius, tierHeight, sides, rng, h * .03f);
+                layers.AddOccluder(c + Vector3.up * (tierHeight * .3f), radius * .7f, .9f);
             }
         }
 
-        /// <summary>Bush at the foot of a tree group or along the forest edge: two or three flat, rough lobes.</summary>
-        static void Shrub(LayerSet layers, Vector3 pos, float size, Rng rng, bool shadows)
+        /// <summary>
+        /// Bush at the foot of a tree group, along the forest edge or framing the view: two to four rough, rounded lobes; large ones get finer facets
+        /// (<paramref name="subdivisions"/> 1) so they read as leafy mounds, not as boulders.
+        /// </summary>
+        static void Shrub(LayerSet layers, Vector3 pos, float size, Rng rng, bool shadows, int subdivisions)
         {
-            int n = 2 + rng.Int(2);
+            int n = 2 + rng.Int(subdivisions > 0 ? 3 : 2);
             for (int i = 0; i < n; i++)
             {
                 float a = rng.Value() * 6.28f, d = i == 0 ? 0f : size * rng.Range(.35f, .6f), rl = size * (i == 0 ? rng.Range(.55f, .7f) : rng.Range(.35f, .5f));
-                Vector3 c = pos + new Vector3(Mathf.Cos(a) * d, rl * .5f, Mathf.Sin(a) * d);
-                Mat m = i == 0 ? Mat.ShrubMid : (rng.Value() < .5f ? Mat.ShrubDark : Mat.ShrubMid);
-                Shapes.Lobe(layers.Get(m, shadows), c, new Vector3(rl, rl * .72f, rl), Basis.Euler(rng.Value() * 6.28f, 0f, 0f), rng, .25f, 0, .45f);
+                float lift = subdivisions > 0 ? .78f : .72f;
+                Vector3 c = pos + new Vector3(Mathf.Cos(a) * d, rl * (subdivisions > 0 ? .62f : .5f), Mathf.Sin(a) * d);
+                Mat m = i == 0 ? Mat.ShrubMid : (rng.Value() < .4f ? Mat.ShrubDark : Mat.ShrubMid);
+                Shapes.Lobe(layers.Get(m, shadows), c, new Vector3(rl, rl * lift, rl), Basis.Euler(rng.Value() * 6.28f, 0f, 0f), rng, subdivisions > 0 ? .2f : .25f, subdivisions, .45f);
+                layers.AddOccluder(c, new Vector3(rl, rl * lift, rl), .8f);
             }
         }
 
@@ -198,7 +272,9 @@ namespace Droply.Landscape
             {
                 float t = n > 1 ? (float)i / (n - 1) : 0f, rl = spread * (1f - .3f * t) * rng.Range(.85f, 1.1f);
                 Vector3 c = pos + new Vector3(rng.Signed() * spread * .15f, h * (.42f + .26f * t), rng.Signed() * spread * .15f);
-                Shapes.Lobe(layers.Get(haze, false), c, new Vector3(rl, rl * rng.Range(.85f, 1.15f), rl), Basis.Euler(rng.Value() * 6.28f, 0f, 0f), rng, .22f, 0, .6f);
+                Vector3 radii = new Vector3(rl, rl * rng.Range(.85f, 1.15f), rl);
+                Shapes.Lobe(layers.Get(haze, false), c, radii, Basis.Euler(rng.Value() * 6.28f, 0f, 0f), rng, .22f, 0, .6f);
+                layers.AddOccluder(c, radii, .7f);
             }
         }
 
@@ -207,8 +283,10 @@ namespace Droply.Landscape
         {
             for (int i = 0; i < 3; i++)
             {
-                float t = i / 2f;
-                Shapes.Tier(layers.Get(haze, false), pos + new Vector3(0f, h * (.12f + .5f * t), 0f), spread * Mathf.Lerp(1f, .3f, t), h * .38f, 5, rng, h * .02f);
+                float t = i / 2f, radius = spread * Mathf.Lerp(1f, .3f, t);
+                Vector3 c = pos + new Vector3(0f, h * (.12f + .5f * t), 0f);
+                Shapes.Tier(layers.Get(haze, false), c, radius, h * .38f, 5, rng, h * .02f);
+                layers.AddOccluder(c + Vector3.up * (h * .1f), radius * .7f, .7f);
             }
         }
     }

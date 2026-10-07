@@ -27,16 +27,16 @@ namespace Droply.Landscape
         static float Raw(float x, float z)
         {
             float r = Mathf.Sqrt(x * x + z * z);
-            float rolling = .85f * Noise.Signed(x * .028f + 11.3f, z * .028f + 4.7f, 7)
-                          + .27f * Noise.Signed(x * .071f, z * .071f, 19)
-                          + .05f * Noise.Signed(x * .19f, z * .19f, 31);
+            float rolling = 1.2f * Noise.Signed(x * .028f + 11.3f, z * .028f + 4.7f, 7)
+                          + .38f * Noise.Signed(x * .071f, z * .071f, 19)
+                          + .06f * Noise.Signed(x * .19f, z * .19f, 31);
             float calm = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((r - 1.5f) / 11f));
             float h = rolling * calm;
-            h += Gauss(x, z, Plan.GroupCenter.x, Plan.GroupCenter.y, 14f, 12f, 1.15f);              // knoll under the tree group: it stands out against the sky
-            h += Gauss(x, z, -17f, 15f, 7f, 6f, .9f);                                              // soft mound in the left foreground (the big stone sits on its flank)
-            h += Gauss(x, z, 15f, 25f, 9f, 8f, 1.0f);                                              // second mound on the right: the path bends around it
-            h += Gauss(x, z, 4f, 62f, 30f, 7f, -.7f);                                              // shallow swale before the rise
-            h += Gauss(x, z, 0f, 92f, 70f, 16f, 2.6f * (.75f + .25f * Noise.Signed(x * .02f, 3f, 5))); // the ridge the path climbs
+            h += Gauss(x, z, Plan.GroupCenter.x, Plan.GroupCenter.y, 14f, 12f, 1.45f);              // knoll under the tree group: it stands out against the sky
+            h += Gauss(x, z, -17f, 15f, 7f, 6f, 1.15f);                                              // soft mound in the left foreground (the big stone sits on its flank)
+            h += Gauss(x, z, 15f, 25f, 9f, 8f, 1.3f);                                              // second mound on the right: the path bends around it
+            h += Gauss(x, z, 4f, 62f, 30f, 7f, -.95f);                                              // shallow swale before the rise
+            h += Gauss(x, z, 0f, 92f, 70f, 16f, 3.1f * (.75f + .25f * Noise.Signed(x * .02f, 3f, 5))); // the ridge the path climbs
             h += Gauss(x, z, 0f, -75f, 45f, 28f, 2.2f);                                            // soft rise behind the viewer
             return h;
         }
@@ -46,13 +46,14 @@ namespace Droply.Landscape
         readonly Vector3[] normals;
         readonly int nx, nz;
 
+        /// <summary>Dense (1.25 m) between the two limits, then growing steps out to the edge of the 600 m disc.</summary>
         static float[] Axis(float denseMin, float denseMax)
         {
+            const float dense = 1.25f;
             var list = new List<float>();
-            for (float c = denseMin; c <= denseMax + .001f; c += 2f) list.Add(c);
-            float step = 2f;
-            for (float c = denseMax; c < Extent;) { step = 2f + .11f * (c - denseMax); c = Mathf.Min(c + step, Extent); list.Add(c); }
-            step = 2f;
+            for (float c = denseMin; c <= denseMax + .001f; c += dense) list.Add(c);
+            float step;
+            for (float c = list[list.Count - 1]; c < Extent;) { step = 2f + .11f * (c - denseMax); c = Mathf.Min(c + step, Extent); list.Add(c); }
             for (float c = denseMin; c > -Extent;) { step = 2f + .11f * (denseMin - c); c = Mathf.Max(c - step, -Extent); list.Insert(0, c); }
             return list.ToArray();
         }
@@ -106,56 +107,27 @@ namespace Droply.Landscape
             return normals[j * nx + i];
         }
 
-        /// <summary>Which of the three ground colours a triangle gets: warm sunlit patches, the base meadow, cooler shaded patches (large, soft areas).</summary>
-        static Mat PatchFor(float x, float z)
+        /// <summary>The ground as one smooth mesh. Its colour and light are baked into the vertex colours (soft patches, no hard edges), see <see cref="Look.Ground"/>.</summary>
+        public MeshData BuildMesh()
         {
-            float n = .7f * Noise.Value(x * .045f + 3.1f, z * .045f + 8.2f, 41) + .3f * Noise.Value(x * .13f, z * .13f, 43);
-            float r = Mathf.Sqrt(x * x + z * z);
-            n += .10f * Mathf.Clamp01(1f - Mathf.Abs(x - 6f) / 24f) * Mathf.Clamp01(1f - Mathf.Abs(z - 34f) / 40f); // a little more light along the path
-            if (r < 5f) return Mat.GroundBase;
-            n = Mathf.Lerp(n, .5f, Mathf.SmoothStep(0f, 1f, (r - 60f) / 60f)); // far away the huge triangles stay one calm colour
-            float calm = .13f * (1f - Mathf.SmoothStep(0f, 1f, (r - 6f) / 34f));   // close to the viewer the meadow stays almost one colour; patches grow with distance
-            return n < .38f - calm ? Mat.GroundShade : n > .64f + calm ? Mat.GroundSun : Mat.GroundBase;
-        }
-
-        /// <summary>The ground as three meshes (one per colour); smooth normals, so the meadow reads calm.</summary>
-        public Dictionary<Mat, MeshData> BuildPatches()
-        {
-            var tris = new Dictionary<Mat, List<int>>
-            {
-                { Mat.GroundBase, new List<int>() }, { Mat.GroundSun, new List<int>() }, { Mat.GroundShade, new List<int>() }
-            };
+            var vertices = new Vector3[nx * nz];
+            for (int j = 0; j < nz; j++)
+                for (int i = 0; i < nx; i++)
+                    vertices[j * nx + i] = new Vector3(Xs[i], heights[j * nx + i], Zs[j]);
+            var triangles = new int[(nx - 1) * (nz - 1) * 6];
+            int t = 0;
             for (int j = 0; j < nz - 1; j++)
                 for (int i = 0; i < nx - 1; i++)
                 {
                     int a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
-                    float cx1 = (Xs[i] + Xs[i + 1] + Xs[i + 1]) / 3f, cz1 = (Zs[j] + Zs[j + 1] + Zs[j]) / 3f;
-                    float cx2 = (Xs[i] + Xs[i + 1] + Xs[i]) / 3f, cz2 = (Zs[j] + Zs[j + 1] + Zs[j + 1]) / 3f;
-                    var t1 = tris[PatchFor(cx1, cz1)]; t1.Add(a); t1.Add(d); t1.Add(b);
-                    var t2 = tris[PatchFor(cx2, cz2)]; t2.Add(a); t2.Add(c); t2.Add(d);
+                    triangles[t++] = a; triangles[t++] = d; triangles[t++] = b;
+                    triangles[t++] = a; triangles[t++] = c; triangles[t++] = d;
                 }
-            var result = new Dictionary<Mat, MeshData>();
-            foreach (var pair in tris)
+            return new MeshData
             {
-                var map = new Dictionary<int, int>();
-                var vertices = new List<Vector3>();
-                var norms = new List<Vector3>();
-                var indices = new List<int>();
-                foreach (int index in pair.Value)
-                {
-                    int mapped;
-                    if (!map.TryGetValue(index, out mapped))
-                    {
-                        mapped = vertices.Count;
-                        map[index] = mapped;
-                        vertices.Add(new Vector3(Xs[index % nx], heights[index], Zs[index / nx]));
-                        norms.Add(normals[index]);
-                    }
-                    indices.Add(mapped);
-                }
-                result[pair.Key] = new MeshData { Vertices = vertices.ToArray(), Normals = norms.ToArray(), Triangles = indices.ToArray() };
-            }
-            return result;
+                Vertices = vertices, Normals = (Vector3[])normals.Clone(), Triangles = triangles,
+                Tags = new float[vertices.Length], Jitters = new float[vertices.Length], Owners = new int[vertices.Length]
+            };
         }
     }
 }

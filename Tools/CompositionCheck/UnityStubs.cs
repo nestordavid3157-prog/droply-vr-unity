@@ -11,6 +11,9 @@ namespace UnityEngine
         public static float Sin(float f) { return (float)Math.Sin(f); }
         public static float Cos(float f) { return (float)Math.Cos(f); }
         public static float Atan(float f) { return (float)Math.Atan(f); }
+        public static float Asin(float f) { return (float)Math.Asin(f); }
+        public static float Acos(float f) { return (float)Math.Acos(f); }
+        public static float Tan(float f) { return (float)Math.Tan(f); }
         public static float Sqrt(float f) { return (float)Math.Sqrt(f); }
         public static float Exp(float f) { return (float)Math.Exp(f); }
         public static float Pow(float f, float p) { return (float)Math.Pow(f, p); }
@@ -20,9 +23,11 @@ namespace UnityEngine
         public static int Min(int a, int b) { return a < b ? a : b; }
         public static int Max(int a, int b) { return a > b ? a : b; }
         public static float Clamp(float v, float min, float max) { return v < min ? min : v > max ? max : v; }
+        public static int Clamp(int v, int min, int max) { return v < min ? min : v > max ? max : v; }
         public static float Clamp01(float v) { return v < 0f ? 0f : v > 1f ? 1f : v; }
         public static float Lerp(float a, float b, float t) { return a + (b - a) * Clamp01(t); }
         public static float SmoothStep(float from, float to, float t) { t = Clamp01(t); t = -2f * t * t * t + 3f * t * t; return to * t + from * (1f - t); }
+        public static float Atan2(float y, float x) { return (float)Math.Atan2(y, x); }
         public static int FloorToInt(float f) { return (int)Math.Floor(f); }
         public static int CeilToInt(float f) { return (int)Math.Ceiling(f); }
         public static float Repeat(float t, float length) { return Clamp(t - (float)Math.Floor(t / length) * length, 0f, length); }

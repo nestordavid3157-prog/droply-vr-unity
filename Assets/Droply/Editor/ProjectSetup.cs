@@ -16,6 +16,7 @@ namespace Droply.Editor
     public static class ProjectSetup
     {
         const string ScenePath = "Assets/Droply/Scenes/Meadow.unity";
+        const string BakedShaderPath = "Assets/Droply/Shaders/VertexColorUnlit.shader";
 
         [MenuItem("Droply/Generate and configure landscape")]
         public static void Generate()
@@ -25,8 +26,12 @@ namespace Droply.Editor
             var root = new GameObject("Meadow Landscape");
             var generator = root.AddComponent<LandscapeGenerator>();
             // Serialized shader references keep the shaders in Quest builds (the generator creates its materials at runtime).
+            // The vertex colour shader draws the baked landscape; the URP shaders only serve the lit fallback.
+            generator.vertexColorShader = AssetDatabase.LoadAssetAtPath<Shader>(BakedShaderPath);
             generator.litShader = Shader.Find("Universal Render Pipeline/Lit");
             generator.unlitShader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (generator.vertexColorShader == null)
+                Debug.LogError("The vertex colour shader was not found at " + BakedShaderPath + "; the landscape would fall back to the plain lit look.");
             if (generator.litShader == null || generator.unlitShader == null)
                 Debug.LogWarning("The URP Lit/Unlit shaders were not found; check that the Universal RP package is installed.");
 
@@ -97,7 +102,7 @@ namespace Droply.Editor
                 AssetDatabase.CreateAsset(pipeline, pipelinePath);
             }
             pipeline.supportsHDR = false;
-            pipeline.msaaSampleCount = 2;
+            pipeline.msaaSampleCount = 4; // sharp low-poly edges on a tile-based GPU: 4x is the usual choice on Quest
             pipeline.renderScale = 1f;
             pipeline.mainLightShadowmapResolution = 1024;
             pipeline.shadowDistance = 60f;
@@ -109,7 +114,7 @@ namespace Droply.Editor
             serializedPipeline.FindProperty("m_AdditionalLightsRenderingMode").intValue = (int)LightRenderingMode.Disabled;
             serializedPipeline.ApplyModifiedPropertiesWithoutUndo();
             QualitySettings.shadowDistance = 60f;
-            QualitySettings.antiAliasing = 2;
+            QualitySettings.antiAliasing = 4;
             GraphicsSettings.defaultRenderPipeline = pipeline;
             QualitySettings.renderPipeline = pipeline;
             EditorUtility.SetDirty(pipeline);
@@ -129,6 +134,8 @@ namespace Droply.Editor
             if (violations.Count > 0) throw new BuildFailedException("Composition checks failed:\n - " + string.Join("\n - ", violations));
             if (!scene.IsValid() || scene.GetRootGameObjects().Length != 2) throw new BuildFailedException("Scene must contain only its landscape and tracked-viewpoint roots.");
             if (Camera.main == null) throw new BuildFailedException("Starting viewpoint camera is missing.");
+            if (generators[0].vertexColorShader == null || !generators[0].vertexColorShader.isSupported)
+                throw new BuildFailedException("The vertex colour shader is missing or not supported: run \"Droply > Generate and configure landscape\" (or assign " + BakedShaderPath + " to the generator).");
             var poses = Object.FindObjectsByType<HeadsetPose>();
             if (poses.Length != 1) throw new BuildFailedException("The main viewpoint must use headset tracking.");
             if (poses[0].transform.localPosition != Vector3.zero) throw new BuildFailedException("The tracked camera rig must not impose a headset height.");
@@ -161,8 +168,10 @@ namespace Droply.Editor
                 generator.SendMessage("Awake");
                 generated = generator.transform.Find("Generated Landscape");
                 if (generated == null) throw new BuildFailedException("Landscape generation did not create its content root.");
-                if (generated.Find("Ground GroundBase") == null || generated.Find("Sand path") == null)
+                if (generated.Find("Ground") == null || generated.Find("Sand path") == null)
                     throw new BuildFailedException("The generated terrain or leading path mesh is missing.");
+                if (generated.Find("Sky") == null || generated.Find("Sun") == null)
+                    throw new BuildFailedException("The sky dome or the sun disc is missing.");
                 if (generated.childCount < 20)
                     throw new BuildFailedException("The generated landscape has only " + generated.childCount + " mesh layers; expected terrain, path, trees, meadow details and distance layers.");
                 foreach (var child in generated.GetComponentsInChildren<Transform>(true))

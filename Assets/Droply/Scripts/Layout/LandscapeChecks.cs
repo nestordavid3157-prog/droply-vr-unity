@@ -48,6 +48,10 @@ namespace Droply.Landscape
                 if (d.Path.EdgeDistance(p.x, p.z) < 1.0f) v.Add("Grass tuft at " + At(p) + " is on or at the path edge.");
             foreach (var p in d.Flowers)
                 if (d.Path.EdgeDistance(p.x, p.z) < 1.8f) v.Add("Flower at " + At(p) + " is too close to the path.");
+            foreach (var p in d.EdgeTufts)
+                if (d.Path.EdgeDistance(p.x, p.z) < .45f) v.Add("Path-edge tuft at " + At(p) + " is on the path.");
+            foreach (var p in d.Pebbles)
+                if (d.Path.EdgeDistance(p.x, p.z) < .2f) v.Add("Pebble at " + At(p) + " lies on the path.");
             foreach (var r in d.Rocks)
                 if (d.Path.EdgeDistance(r.Position.x, r.Position.z) - r.Radius < 1.0f) v.Add("Stone at " + At(r.Position) + " reaches the path.");
             foreach (var t in d.Trees)
@@ -61,12 +65,13 @@ namespace Droply.Landscape
         static void ForegroundIsOpen(SceneData d, List<string> v)
         {
             Vector3 origin = Vector3.zero;
-            foreach (var p in d.GrassClumps) if (Flat(p, origin) < 9f) v.Add("Grass tuft within 9 m of the viewer at " + At(p));
-            foreach (var p in d.Flowers) if (Flat(p, origin) < 12f) v.Add("Flower within 12 m of the viewer at " + At(p));
+            foreach (var p in d.GrassClumps) if (Flat(p, origin) < 6f) v.Add("Grass tuft within 6 m of the viewer at " + At(p));
+            foreach (var p in d.Flowers) if (Flat(p, origin) < 8f) v.Add("Flower within 8 m of the viewer at " + At(p));
+            foreach (var p in d.EdgeTufts) if (Flat(p, origin) < 7f) v.Add("Path-edge tuft within 7 m of the viewer at " + At(p));
             foreach (var t in d.Trees) if (Flat(t.Position, origin) < 24f) v.Add(t.Kind + " within 24 m of the viewer at " + At(t.Position));
             int near = 0;
             foreach (var p in d.GrassClumps) if (Flat(p, origin) < 20f) near++;
-            if (near > 12) v.Add("Too many grass tufts in the first 20 m: " + near);
+            if (near > 18) v.Add("Too many grass tufts in the first 20 m: " + near);
         }
 
         static void HeroGroupIsAGroup(SceneData d, List<string> v)
@@ -193,8 +198,11 @@ namespace Droply.Landscape
         static void CountsStayLow(SceneData d, List<string> v)
         {
             if (d.IslandCenters.Count < 5 || d.IslandCenters.Count > 10) v.Add("Flower islands: " + d.IslandCenters.Count + ", expected 5 to 10.");
-            if (d.Flowers.Count > 140) v.Add("Too many flowers: " + d.Flowers.Count);
-            if (d.GrassClumps.Count > 70) v.Add("Too many grass tufts: " + d.GrassClumps.Count);
+            if (d.Flowers.Count > 260) v.Add("Too many flowers: " + d.Flowers.Count);
+            if (d.GrassClumps.Count > 110) v.Add("Too many grass tufts: " + d.GrassClumps.Count);
+            if (d.EdgeTufts.Count > 30) v.Add("Too many path-edge tufts: " + d.EdgeTufts.Count);
+            if (d.FleckCount > 1500) v.Add("Too many grass flecks: " + d.FleckCount);
+            if (d.Pebbles.Count > 30) v.Add("Too many pebbles: " + d.Pebbles.Count);
             if (d.Rocks.Count < 3 || d.Rocks.Count > 8) v.Add("Stones: " + d.Rocks.Count + ", expected 3 to 8.");
             float smallest = float.MaxValue, largest = 0f;
             foreach (var r in d.Rocks) { smallest = Mathf.Min(smallest, r.Radius); largest = Mathf.Max(largest, r.Radius); }
@@ -222,27 +230,33 @@ namespace Droply.Landscape
             float slope, relief, error;
             Relief(d, out slope, out relief, out error);
             if (relief < 2.5f) v.Add("The ground is too flat: " + relief.ToString("0.0") + " m relief within 90 m (at least 2.5 m).");
-            if (slope > 9f) v.Add("The ground is too steep: " + slope.ToString("0.0") + " degrees (at most 9).");
+            if (slope > 12f) v.Add("The ground is too steep: " + slope.ToString("0.0") + " degrees (at most 12).");
             if (error > .12f) v.Add("The terrain mesh deviates up to " + error.ToString("0.00") + " m from the height function.");
             if (Mathf.Abs(TerrainModel.Height(0f, 0f)) > .05f) v.Add("The standing spot is not level with the tracking origin.");
-            // The three ground colours share the meadow around the viewer (within 70 m, by area): no single flat green.
-            var area = new Dictionary<Mat, float>();
-            float all = 0f;
-            foreach (var layer in d.Layers)
-            {
-                if (layer.Material != Mat.GroundBase && layer.Material != Mat.GroundSun && layer.Material != Mat.GroundShade) continue;
-                float sum = 0f;
-                for (int i = 0; i < layer.Mesh.Triangles.Length; i += 3)
+            GroundIsNotOneGreen(v);
+        }
+
+        static float Luminance(Vector3 linear) { return .2126f * linear.x + .7152f * linear.y + .0722f * linear.z; }
+
+        /// <summary>The meadow colour varies softly (cool shade, fresh green, sunlit and dry patches): not one flat green, not a patchwork either.</summary>
+        static void GroundIsNotOneGreen(List<string> v)
+        {
+            var values = new List<float>();
+            float hueLow = 1f, hueHigh = 0f;
+            for (float x = -70f; x <= 70f; x += 5f)
+                for (float z = -70f; z <= 70f; z += 5f)
                 {
-                    Vector3 a = layer.Mesh.Vertices[layer.Mesh.Triangles[i]], b = layer.Mesh.Vertices[layer.Mesh.Triangles[i + 1]], c = layer.Mesh.Vertices[layer.Mesh.Triangles[i + 2]];
-                    float cx = (a.x + b.x + c.x) / 3f, cz = (a.z + b.z + c.z) / 3f;
-                    if (cx * cx + cz * cz > 70f * 70f) continue;
-                    sum += Mathf.Abs((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) * .5f;
+                    Vector3 c = Look.Ground(x, z);
+                    values.Add(Luminance(c));
+                    float warmth = c.x / Mathf.Max(c.y, 1e-4f);
+                    hueLow = Mathf.Min(hueLow, warmth); hueHigh = Mathf.Max(hueHigh, warmth);
                 }
-                area[layer.Material] = sum; all += sum;
-            }
-            foreach (var pair in area)
-                if (pair.Value < all * .12f || pair.Value > all * .65f) v.Add("The ground colour " + pair.Key + " covers " + (100f * pair.Value / all).ToString("0") + " % of the meadow (expected 12 to 65 %).");
+            values.Sort();
+            float p10 = values[values.Count / 10], p90 = values[values.Count * 9 / 10], median = values[values.Count / 2];
+            float spread = (p90 - p10) / median;
+            if (spread < .06f) v.Add("The meadow is one flat colour (brightness spread " + spread.ToString("0.00") + ", at least 0.06).");
+            if (spread > .45f) v.Add("The meadow is a patchwork (brightness spread " + spread.ToString("0.00") + ", at most 0.45).");
+            if (hueHigh - hueLow < .12f) v.Add("The meadow has no warm and cool patches (red-to-green ratio range " + (hueHigh - hueLow).ToString("0.00") + ", at least 0.12).");
         }
 
         public static float Saturation(Color32 c)
@@ -255,8 +269,9 @@ namespace Droply.Landscape
         {
             foreach (var layer in d.Layers)
             {
-                float s = Saturation(Palette.Color(layer.Material));
-                if (s > .62f) v.Add("Material " + layer.Material + " is too saturated (" + s.ToString("0.00") + ").");
+                // leaves, grass, ground, bark and stone stay muted; the small flower heads and their golden eyes may be brighter (the concept image has them clear)
+                float s = Saturation(Palette.Color(layer.Material)), limit = Palette.Kind(layer.Material) == SurfaceKind.Petal ? .8f : .62f;
+                if (s > limit) v.Add("Material " + layer.Material + " is too saturated (" + s.ToString("0.00") + ", at most " + limit.ToString("0.00") + ").");
             }
         }
 

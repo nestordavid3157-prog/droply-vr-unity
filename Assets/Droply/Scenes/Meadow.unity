@@ -276,6 +276,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b6fd8502bc2ea5d41b22b8564ba1cd08, type: 3}
   m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::Droply.Landscape.LandscapeGenerator
+  vertexColorShader: {fileID: 4800000, guid: 46f8891a74754318b4d65fc149c81b12, type: 3}
+  litShader: {fileID: 4800000, guid: 933532a4fcc9baf4fa0491de14d08ed7, type: 3}
+  unlitShader: {fileID: 4800000, guid: 650dd9526735d5b46b79224bc6e94025, type: 3}
 --- !u!4 &1089385834
 Transform:
   m_ObjectHideFlags: 0

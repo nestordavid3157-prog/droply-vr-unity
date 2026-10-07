@@ -52,9 +52,9 @@ namespace Droply.CompositionCheck
             var meadow = Blank();
             for (int i = 0; i < 175; i++) meadow.GrassClumps.Add(new Vector3(rng.Range(-17f, 17f), 0f, rng.Range(2f, 58f)));
             meadow.Flowers.Add(new Vector3(3f, 0f, 5f));
-            Expect(ref failed, "grass in the foreground is rejected", meadow, "Grass tuft within 9 m");
+            Expect(ref failed, "grass in the foreground is rejected", meadow, "Grass tuft within 6 m");
             Expect(ref failed, "too much grass is rejected", meadow, "Too many grass tufts");
-            Expect(ref failed, "flowers at the feet are rejected", meadow, "Flower within 12 m");
+            Expect(ref failed, "flowers at the feet are rejected", meadow, "Flower within 8 m");
 
             // 5. A tree and a stone on the path.
             var onPath = Blank();
@@ -63,6 +63,17 @@ namespace Droply.CompositionCheck
             onPath.Rocks.Add(new RockRecord { Position = onPath.Path.PointAt(30f), Radius = 1f });
             Expect(ref failed, "a tree on the path is rejected", onPath, "covers the path");
             Expect(ref failed, "a stone on the path is rejected", onPath, "reaches the path");
+            onPath.EdgeTufts.Add(onPath.Path.PointAt(40f));
+            onPath.Pebbles.Add(onPath.Path.PointAt(20f));
+            Expect(ref failed, "a path-edge tuft on the path is rejected", onPath, "Path-edge tuft at");
+            Expect(ref failed, "a pebble on the path is rejected", onPath, "lies on the path");
+
+            // 5b. Too much of the small stuff.
+            var crowded = Blank();
+            crowded.FleckCount = 5000;
+            for (int i = 0; i < 80; i++) crowded.Pebbles.Add(new Vector3(30f + i, 0f, 30f));
+            Expect(ref failed, "a carpet of grass flecks is rejected", crowded, "Too many grass flecks");
+            Expect(ref failed, "a heap of pebbles is rejected", crowded, "Too many pebbles");
 
             // 6. The finished landscape must pass all of it.
             var real = LandscapeBuilder.Build();
