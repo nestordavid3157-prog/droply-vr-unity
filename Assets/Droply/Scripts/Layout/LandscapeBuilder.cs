@@ -341,6 +341,13 @@ namespace Droply.Landscape
 
         // ---- meadow details ---------------------------------------------------------------------------------------------------------
 
+        /// <summary>Blade width factor by distance from the viewer: 1 up to 20 m, widening to 2.2 at 80 m, so far blades stay at least about a pixel wide (no shimmer in the headset).</summary>
+        static float BladeWidth(Vector3 p)
+        {
+            float d = Mathf.Sqrt(p.x * p.x + p.z * p.z);
+            return Mathf.Lerp(1f, 2.2f, Mathf.Clamp01((d - 20f) / 60f));
+        }
+
         static void AddGrass(SceneData data, LayerSet layers, Rng rng)
         {
             MeshBuilder dark = layers.Get(Mat.GrassDark, false), mid = layers.Get(Mat.GrassMid, false), light = layers.Get(Mat.GrassLight, false);
@@ -352,7 +359,7 @@ namespace Droply.Landscape
                     Vector3 p = OnGround(data, group.Center.x + Mathf.Cos(a) * r, group.Center.y + Mathf.Sin(a) * r);
                     data.GrassClumps.Add(p);
                     float size = rng.Range(.85f, 1.3f);
-                    Shapes.Tuft(dark, mid, light, data.Terrain, p, rng.Range(.36f, .55f) * size, 10 + rng.Int(6), .28f * size, .7f * size, rng);   // at most about 0.9 m tall
+                    Shapes.Tuft(dark, mid, light, data.Terrain, p, rng.Range(.36f, .55f) * size, 10 + rng.Int(6), .28f * size, .7f * size, rng, BladeWidth(p));   // at most about 0.9 m tall
                 }
             }
         }
@@ -371,7 +378,7 @@ namespace Droply.Landscape
                 float x = p.x + d.z * side * offset, z = p.z - d.x * side * offset;
                 Vector3 ground = OnGround(data, x, z);
                 data.EdgeTufts.Add(ground);
-                Shapes.Tuft(dark, mid, light, data.Terrain, ground, rng.Range(.28f, .46f), 8 + rng.Int(4), .2f, rng.Range(.4f, .62f), rng);
+                Shapes.Tuft(dark, mid, light, data.Terrain, ground, rng.Range(.28f, .46f), 8 + rng.Int(4), .2f, rng.Range(.4f, .62f), rng, BladeWidth(ground));
             }
         }
 
@@ -403,7 +410,7 @@ namespace Droply.Landscape
                 }
                 if (onIsland) continue;
                 float height = rng.Range(.12f, .26f) * Mathf.Lerp(.8f, 1.6f, Mathf.Clamp01(distance / 70f));   // small close to the viewer, a little larger far away so they still read
-                Shapes.Tuft(dark, mid, light, data.Terrain, OnGround(data, x, z), height * 1.1f, 5 + rng.Int(3), height * .6f, height, rng);
+                Shapes.Tuft(dark, mid, light, data.Terrain, OnGround(data, x, z), height * 1.1f, 5 + rng.Int(3), height * .6f, height, rng, BladeWidth(new Vector3(x, 0f, z)));
                 made++;
             }
             data.FleckCount = made;
@@ -463,7 +470,7 @@ namespace Droply.Landscape
                 {
                     float a = k * 1.6f + rng.Value() * .8f, r = island.Radius * rng.Range(.85f, 1.15f);
                     Vector3 c = OnGround(data, island.Center.x + Mathf.Cos(a) * r, island.Center.y + Mathf.Sin(a) * r);
-                    Shapes.Tuft(layers.Get(Mat.GrassDark, false), layers.Get(Mat.GrassMid, false), layers.Get(Mat.GrassLight, false), data.Terrain, c, rng.Range(.3f, .45f), 8, .22f, rng.Range(.45f, .65f), rng);
+                    Shapes.Tuft(layers.Get(Mat.GrassDark, false), layers.Get(Mat.GrassMid, false), layers.Get(Mat.GrassLight, false), data.Terrain, c, rng.Range(.3f, .45f), 8, .22f, rng.Range(.45f, .65f), rng, BladeWidth(c));
                 }
                 for (int i = 0; i < island.Flowers; i++)
                 {

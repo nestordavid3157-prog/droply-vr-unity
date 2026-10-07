@@ -203,8 +203,9 @@ namespace Droply.Landscape
         /// <summary>
         /// A tuft of spikes fanned out from <paramref name="center"/>: tall in the heart, shorter and leaning outwards at the rim, dark at the root, light at the tip
         /// (the gradient comes from the tags), the tallest blades a shade lighter. Every blade sits on the rendered ground.
+        /// <paramref name="widthScale"/> widens the blades of far tufts: a blade a few centimetres wide is less than a pixel at 60 m and would shimmer when the head moves.
         /// </summary>
-        public static void Tuft(MeshBuilder dark, MeshBuilder mid, MeshBuilder light, TerrainModel terrain, Vector3 center, float radius, int blades, float minHeight, float maxHeight, Rng rng)
+        public static void Tuft(MeshBuilder dark, MeshBuilder mid, MeshBuilder light, TerrainModel terrain, Vector3 center, float radius, int blades, float minHeight, float maxHeight, Rng rng, float widthScale = 1f)
         {
             for (int i = 0; i < blades; i++)
             {
@@ -218,7 +219,7 @@ namespace Droply.Landscape
                 MeshBuilder mb = pick < .22f ? dark : pick < .72f ? mid : light;
                 mb.Jitter = rng.Signed() * .08f;
                 float yaw = Mathf.PI * .5f - around + rng.Signed() * .5f;                  // leans outwards, not all the same way
-                Spike(mb, root, yaw, height, .05f + .07f * height, height * rng.Range(.1f, .45f) * (1.1f - heart * .6f));
+                Spike(mb, root, yaw, height, (.05f + .07f * height) * widthScale, height * rng.Range(.1f, .45f) * (1.1f - heart * .6f));
             }
         }
 
