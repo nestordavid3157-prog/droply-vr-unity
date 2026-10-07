@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Droply landscape preview</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; font-family: system-ui, sans-serif; }
+  canvas { display: block; cursor: grab; }
+  #hint { position: fixed; left: 12px; bottom: 10px; color: #fff; font-size: 13px; text-shadow: 0 1px 3px #000; pointer-events: none; }
+</style>
+<script type="importmap">{ "imports": { "three": "./node_modules/three/build/three.module.js" } }</script>
+</head>
+<body>
+<div id="hint">Preview of Assets/Droply/Scripts/Layout (three.js, not Unity's renderer): drag = look, 1 = forward, 2 = left, 3 = right, 4 = behind, [ ] = eye height (plan view: ?view=top)</div>
+<script type="module">
+// Shows the scene exported by `dotnet run --project Tools/CompositionCheck -- export Tools/Preview/scene.json` from the viewer's eye height.
+// Query parameters (also used for screenshots): view=top, yaw, pitch, eye, fov, px/pz (position), tx/ty/tz (look at), w/h (size), half/cz (plan view).
+// Lighting follows the player's settings roughly (warm side sun, trilight ambient, soft shadows); colours, shader and anti-aliasing differ from URP on the headset.
+import * as THREE from 'three';
+
+const q = new URLSearchParams(location.search);
+const still = q.has('view') || q.has('yaw') || q.has('tx') || q.has('w');
+const W = still ? parseInt(q.get('w') || '1600') : innerWidth, H = still ? parseInt(q.get('h') || '900') : innerHeight;
+if (still) document.getElementById('hint').remove();
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const srgb = (a) => new THREE.Color().setRGB(a[0], a[1], a[2], THREE.SRGBColorSpace);
+const bytes = (b64) => { const s = atob(b64), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
+const data = await (await fetch(q.get('scene') || 'scene.json')).json();
+const plan = q.get('view') === 'top';
+
+// Unity is left-handed: mirror x (positions and normals) and swap two indices per triangle so the image matches the player.
+for (const layer of data.layers) {
+  if (plan && /TreeLine|Hill|Cloud/.test(layer.material)) continue;
+  const geometry = new THREE.BufferGeometry();
+  const p = new Float32Array(bytes(layer.positions)), n = new Float32Array(bytes(layer.normals)), idx = new Uint32Array(bytes(layer.indices));
+  for (let i = 0; i < p.length; i += 3) { p[i] = -p[i]; n[i] = -n[i]; }
+  for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
+  geometry.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(n, 3));
+  geometry.setIndex(new THREE.BufferAttribute(idx, 1));
+  const color = srgb(layer.color.map((v) => v / 255));
+  const material = layer.unlit ? new THREE.MeshBasicMaterial({ color })
+                               : new THREE.MeshLambertMaterial({ color, side: layer.double ? THREE.DoubleSide : THREE.FrontSide });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = layer.shadows;
+  mesh.receiveShadow = !layer.unlit;
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+}
+
+// Unity light intensities are radiance, three.js expects irradiance: multiply by pi.
+const pitch = data.sun.pitch * Math.PI / 180, yaw = data.sun.yaw * Math.PI / 180;
+const toward = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)); // direction the light travels (x mirrored)
+const sun = new THREE.DirectionalLight(srgb(data.sun.color), data.sun.intensity * Math.PI);
+const focus = new THREE.Vector3(0, 0, 28);
+sun.position.copy(focus).addScaledVector(toward, -120);
+sun.target.position.copy(focus);
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -62, right: 62, top: 62, bottom: -62, near: 1, far: 300 });
+sun.shadow.bias = -0.0006;
+sun.shadow.normalBias = 0.05;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(srgb(data.ambient.sky), srgb(data.ambient.ground), 0.9 * Math.PI));
+scene.add(new THREE.AmbientLight(srgb(data.ambient.equator), 0.16 * Math.PI));
+
+const zenith = srgb([data.skyTint[0] * 0.78, data.skyTint[1] * 0.92, data.skyTint[2] * 1.02]), horizon = srgb(data.horizon.map((v) => v / 255));
+const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 48, 24), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, uniforms: { zenith: { value: zenith }, horizon: { value: horizon } },
+  vertexShader: 'varying vec3 v; void main(){ v = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: 'varying vec3 v; uniform vec3 zenith; uniform vec3 horizon; void main(){ float t = pow(clamp(v.y, 0.0, 1.0), 0.55); gl_FragColor = vec4(mix(horizon, zenith, t), 1.0);\n#include <colorspace_fragment>\n}',
+}));
+sky.renderOrder = -1;
+scene.add(sky);
+
+const state = { yaw: parseFloat(q.get('yaw') || '0'), pitch: parseFloat(q.get('pitch') || '0'), eye: parseFloat(q.get('eye') || '1.65') };
+let camera;
+function aim() {
+  if (plan) {
+    const half = parseFloat(q.get('half') || '150'), cz = parseFloat(q.get('cz') || '60');
+    camera = new THREE.OrthographicCamera(-half * W / H, half * W / H, half, -half, 1, 2000);
+    camera.position.set(0, 800, cz); camera.up.set(0, 0, 1); camera.lookAt(0, 0, cz);
+    return;
+  }
+  camera = new THREE.PerspectiveCamera(parseFloat(q.get('fov') || '70'), W / H, 0.1, 1500);
+  const px = parseFloat(q.get('px') || '0'), pz = parseFloat(q.get('pz') || '0');
+  camera.position.set(-px, state.eye, pz);
+  if (q.has('tx')) { camera.lookAt(-parseFloat(q.get('tx')), parseFloat(q.get('ty') || '3'), parseFloat(q.get('tz'))); return; }
+  const y = state.yaw * Math.PI / 180, p = state.pitch * Math.PI / 180;
+  camera.lookAt(-px - Math.sin(y) * Math.cos(p) * 10, state.eye + Math.sin(p) * 10, pz + Math.cos(y) * Math.cos(p) * 10);
+}
+if (plan) { // plan view: tree tiers as coloured discs, the path as white dots (a map for the composition, not a render of the player)
+  const disc = (x, z, r, c) => { const m = new THREE.Mesh(new THREE.CircleGeometry(r, 20), new THREE.MeshBasicMaterial({ color: c })); m.rotation.x = -Math.PI / 2; m.position.set(-x, 700, z); scene.add(m); };
+  for (const t of data.trees) disc(t[0], t[1], Math.max(0.6, t[2]), { Hero: 0xff2020, Edge: 0xff9020, Mid: 0xa040ff, Far: 0x4040ff }[t[3]]);
+  disc(0, 0, 1.2, 0x000000);
+  for (const [x, z] of data.path) disc(x, z, 0.5, 0xffffff);
+}
+function draw() { aim(); renderer.render(scene, camera); }
+draw();
+
+if (!still) {
+  let drag = null;
+  renderer.domElement.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; renderer.domElement.setPointerCapture(e.pointerId); });
+  renderer.domElement.addEventListener('pointerup', () => { drag = null; });
+  renderer.domElement.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    state.yaw -= (e.clientX - drag.x) * 0.2; state.pitch = Math.max(-80, Math.min(80, state.pitch + (e.clientY - drag.y) * 0.2));
+    drag = { x: e.clientX, y: e.clientY };
+    draw();
+  });
+  addEventListener('keydown', (e) => {
+    const views = { 1: [0, 0], 2: [-40, 0], 3: [40, 0], 4: [180, 0] };
+    if (views[e.key]) [state.yaw, state.pitch] = views[e.key];
+    if (e.key === '[') state.eye = Math.max(0.3, state.eye - 0.1);
+    if (e.key === ']') state.eye = Math.min(2.2, state.eye + 0.1);
+    draw();
+  });
+  addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); draw(); });
+}
+window.__ready = true;
+</script>
+</body>
+</html>

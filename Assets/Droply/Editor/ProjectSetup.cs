@@ -23,14 +23,19 @@ namespace Droply.Editor
             Directory.CreateDirectory("Assets/Droply/Scenes");
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             var root = new GameObject("Meadow Landscape");
-            root.AddComponent<LandscapeGenerator>();
+            var generator = root.AddComponent<LandscapeGenerator>();
+            // Serialized shader references keep the shaders in Quest builds (the generator creates its materials at runtime).
+            generator.litShader = Shader.Find("Universal Render Pipeline/Lit");
+            generator.unlitShader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (generator.litShader == null || generator.unlitShader == null)
+                Debug.LogWarning("The URP Lit/Unlit shaders were not found; check that the Universal RP package is installed.");
 
             var cameraRoot = new GameObject("Tracked viewpoint");
             var camera = new GameObject("Main Camera").AddComponent<Camera>();
             camera.transform.SetParent(cameraRoot.transform, false);
             camera.tag = "MainCamera";
-            camera.nearClipPlane = .08f;
-            camera.farClipPlane = 190;
+            camera.nearClipPlane = .1f;
+            camera.farClipPlane = 340; // the farthest hill layer is about 290 m away
             cameraRoot.AddComponent<HeadsetPose>();
 
             EditorSceneManager.SaveScene(scene, ScenePath);
@@ -117,11 +122,11 @@ namespace Droply.Editor
             var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
             var generators = Object.FindObjectsByType<LandscapeGenerator>();
             if (generators.Length != 1) throw new BuildFailedException("Expected exactly one landscape generator, found " + generators.Length);
-            if (LandscapeGenerator.TreeGroupCount < 4 || LandscapeGenerator.TreeGroupCount > 7 ||
-                LandscapeGenerator.FlowerIslandCount < 4 || LandscapeGenerator.FlowerIslandCount > 8 ||
-                LandscapeGenerator.ForegroundRockCount < 3 || LandscapeGenerator.ForegroundRockCount > 6 ||
-                LandscapeGenerator.PathDirectionChanges() < 3)
-                throw new BuildFailedException("Composition counts are outside the landscape constraints.");
+            // The composition rules (open foreground, clear path, one grouped tree group, no tree rows, open sight corridors, relief, calm palette, budget)
+            // are measured on the same data the player builds. The same checks run outside Unity: dotnet run --project Tools/CompositionCheck
+            SceneData composition = LandscapeBuilder.Build();
+            var violations = LandscapeChecks.Run(composition);
+            if (violations.Count > 0) throw new BuildFailedException("Composition checks failed:\n - " + string.Join("\n - ", violations));
             if (!scene.IsValid() || scene.GetRootGameObjects().Length != 2) throw new BuildFailedException("Scene must contain only its landscape and tracked-viewpoint roots.");
             if (Camera.main == null) throw new BuildFailedException("Starting viewpoint camera is missing.");
             var poses = Object.FindObjectsByType<HeadsetPose>();
@@ -133,10 +138,10 @@ namespace Droply.Editor
                     if (root.name.IndexOf(term, System.StringComparison.OrdinalIgnoreCase) >= 0)
                         throw new BuildFailedException("Prohibited world content detected: " + root.name);
             ValidateGeneratedLandscape(generators[0], forbidden);
-            Debug.Log("Landscape validation passed: tree group=" + LandscapeGenerator.TreeGroupCount +
-                ", flower islands=" + LandscapeGenerator.FlowerIslandCount +
-                ", foreground stones=" + LandscapeGenerator.ForegroundRockCount +
-                ", path direction changes=" + LandscapeGenerator.PathDirectionChanges() +
+            int heroTrees = 0;
+            foreach (var tree in composition.Trees) if (tree.Tier == TreeTier.Hero && tree.Kind != TreeKind.Shrub) heroTrees++;
+            Debug.Log("Landscape validation passed: " + composition.TriangleCount + " triangles in " + composition.Layers.Count + " layers, tree group=" + heroTrees +
+                ", flower islands=" + composition.IslandCenters.Count + ", stones=" + composition.Rocks.Count +
                 ", tracked main camera with no forced height.");
         }
 
@@ -146,6 +151,9 @@ namespace Droply.Editor
             var previousSun = RenderSettings.sun;
             var previousAmbientMode = RenderSettings.ambientMode;
             var previousAmbientLight = RenderSettings.ambientLight;
+            var previousAmbientSky = RenderSettings.ambientSkyColor;
+            var previousAmbientEquator = RenderSettings.ambientEquatorColor;
+            var previousAmbientGround = RenderSettings.ambientGroundColor;
             var previousFog = RenderSettings.fog;
             Transform generated = null;
             try
@@ -153,11 +161,10 @@ namespace Droply.Editor
                 generator.SendMessage("Awake");
                 generated = generator.transform.Find("Generated Landscape");
                 if (generated == null) throw new BuildFailedException("Landscape generation did not create its content root.");
-                if (generated.Find("Rolling meadow") == null || generated.Find("Curving sandy path") == null)
+                if (generated.Find("Ground GroundBase") == null || generated.Find("Sand path") == null)
                     throw new BuildFailedException("The generated terrain or leading path mesh is missing.");
-                var instances = generated.GetComponent<InstancedLandscape>();
-                if (instances == null || instances.BatchCount < 5 || instances.InstanceCount < 500)
-                    throw new BuildFailedException("The generated vegetation/flower instance batches are unexpectedly sparse.");
+                if (generated.childCount < 20)
+                    throw new BuildFailedException("The generated landscape has only " + generated.childCount + " mesh layers; expected terrain, path, trees, meadow details and distance layers.");
                 foreach (var child in generated.GetComponentsInChildren<Transform>(true))
                     foreach (string term in forbidden)
                         if (child.name.IndexOf(term, System.StringComparison.OrdinalIgnoreCase) >= 0)
@@ -170,6 +177,9 @@ namespace Droply.Editor
                 RenderSettings.sun = previousSun;
                 RenderSettings.ambientMode = previousAmbientMode;
                 RenderSettings.ambientLight = previousAmbientLight;
+                RenderSettings.ambientSkyColor = previousAmbientSky;
+                RenderSettings.ambientEquatorColor = previousAmbientEquator;
+                RenderSettings.ambientGroundColor = previousAmbientGround;
                 RenderSettings.fog = previousFog;
             }
         }

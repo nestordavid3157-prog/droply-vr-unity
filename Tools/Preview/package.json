@@ -1,0 +1,6 @@
+{
+  "name": "droply-landscape-preview",
+  "private": true,
+  "description": "Browser preview of the landscape composition (three.js). See README.md in the repository root.",
+  "dependencies": { "three": "^0.170.0" }
+}

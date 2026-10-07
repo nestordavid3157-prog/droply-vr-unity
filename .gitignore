@@ -23,3 +23,8 @@ Recordings/
 *.aab
 *.keystore
 *.jks
+
+# Dev tools (Tools/): build output is not committed; the project files are (the pattern above ignores Unity's generated *.csproj)
+Tools/**/bin/
+Tools/**/obj/
+!Tools/**/*.csproj
