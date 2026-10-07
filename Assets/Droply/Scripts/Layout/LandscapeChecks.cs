@@ -27,6 +27,7 @@ namespace Droply.Landscape
             PaletteIsCalm(d, violations);
             WithinBudget(d, violations);
             NothingProhibited(d, violations);
+            WalkAreaHoldsUp(d, violations);
             return violations;
         }
 
@@ -282,6 +283,119 @@ namespace Droply.Landscape
             foreach (var layer in d.Layers) if (layer.CastShadows) shadow += layer.Mesh.TriangleCount;
             if (shadow > ShadowTriangleBudget) v.Add("Shadow-casting triangles " + shadow + " exceed " + ShadowTriangleBudget + ".");
             if (d.Layers.Count > 60) v.Add("Too many draw layers: " + d.Layers.Count);
+        }
+
+        // ---- walking ---------------------------------------------------------------------------------------------------------------------
+
+        /// <summary>How close walking may bring the viewer to the simplified layers: they are built to be seen from far away (rule 14: simplified groups 40-80 m, silhouettes 80-150 m).</summary>
+        public const float MidTreeMinDistance = 35f, ForestLineMinDistance = 80f;
+        /// <summary>Trees and bushes closer than this to walkable ground are built at full detail (rule 23: near = full low-poly geometry).</summary>
+        public const float FullDetailDistance = 15f;
+        /// <summary>The path must stay walkable for at least this far from the start.</summary>
+        public const float MinWalkablePath = 55f;
+
+        public struct WalkStats
+        {
+            public float AreaSquareMetres, PathMetres, Reach, FarthestView, NearestMid;
+            public int UnreachedCells, CoarseCells;
+            public Vector2 NearestMidAt, CoarseAt;
+        }
+
+        /// <summary>Samples the walk area on a 1 m grid: its size, how far the path stays walkable, how far it reaches, what can be seen from it, and whether it is all connected.</summary>
+        public static WalkStats MeasureWalk(SceneData d)
+        {
+            var w = d.Walk;
+            var st = new WalkStats { NearestMid = float.MaxValue };
+            float s = 0f;
+            for (; s <= d.Path.Length; s += .5f)
+            {
+                Vector3 p = d.Path.PointAt(s);
+                if (w.Distance(new Vector2(p.x, p.z)) > -.6f) break;
+            }
+            st.PathMetres = s;
+
+            // farthest vertex from the start of anything that can be seen: not the sky (it follows the viewer), not the ground behind the last hills (hidden)
+            float farthest = 0f;
+            foreach (var layer in d.Layers)
+            {
+                if (Palette.BakedOnly(layer.Material)) continue;
+                bool ground = layer.Material == Mat.GroundBase;
+                foreach (var v in layer.Mesh.Vertices)
+                    if (!ground || v.x * v.x + v.z * v.z <= LandscapeBuilder.OutermostHills * LandscapeBuilder.OutermostHills) farthest = Mathf.Max(farthest, v.magnitude);
+            }
+
+            int x0 = Mathf.FloorToInt(w.Min.x), z0 = Mathf.FloorToInt(w.Min.y), nx = Mathf.CeilToInt(w.Max.x) - x0 + 1, nz = Mathf.CeilToInt(w.Max.y) - z0 + 1;
+            var walkable = new bool[nx * nz];
+            int cells = 0;
+            for (int j = 0; j < nz; j++)
+                for (int i = 0; i < nx; i++)
+                {
+                    var p = new Vector2(x0 + i, z0 + j);
+                    if (!w.Contains(p)) continue;
+                    walkable[j * nx + i] = true;
+                    cells++;
+                    if (p.x < TerrainModel.DenseMinX || p.x > TerrainModel.DenseMaxX || p.y < TerrainModel.DenseMinZ || p.y > TerrainModel.DenseMaxZ) { st.CoarseCells++; st.CoarseAt = p; }
+                    float eye = w.GroundY(p) + 2f;
+                    st.Reach = Mathf.Max(st.Reach, Mathf.Sqrt(p.x * p.x + p.y * p.y + eye * eye));
+                    foreach (var t in d.Trees)
+                    {
+                        if (t.Tier != TreeTier.Mid && t.Tier != TreeTier.Far) continue;
+                        float dx = t.Position.x - p.x, dz = t.Position.z - p.y, dist = Mathf.Sqrt(dx * dx + dz * dz);
+                        if (dist < st.NearestMid) { st.NearestMid = dist; st.NearestMidAt = new Vector2(t.Position.x, t.Position.z); }
+                    }
+                }
+            st.AreaSquareMetres = cells;
+            st.FarthestView = st.Reach + farthest;
+
+            // flood fill from the start: every walkable cell must be reachable
+            var reached = new bool[walkable.Length];
+            var queue = new System.Collections.Generic.Queue<int>();
+            int start = (0 - z0) * nx + (0 - x0);
+            if (start >= 0 && start < walkable.Length && walkable[start]) { reached[start] = true; queue.Enqueue(start); }
+            int count = 0;
+            while (queue.Count > 0)
+            {
+                int c = queue.Dequeue();
+                count++;
+                int ci = c % nx, cj = c / nx;
+                for (int k = 0; k < 4; k++)
+                {
+                    int ni = ci + (k == 0 ? 1 : k == 1 ? -1 : 0), nj = cj + (k == 2 ? 1 : k == 3 ? -1 : 0);
+                    if (ni < 0 || nj < 0 || ni >= nx || nj >= nz) continue;
+                    int n = nj * nx + ni;
+                    if (walkable[n] && !reached[n]) { reached[n] = true; queue.Enqueue(n); }
+                }
+            }
+            st.UnreachedCells = cells - count;
+            return st;
+        }
+
+        /// <summary>
+        /// Walking must not break the composition: the start and the path are walkable, the area is connected, stays on the fine terrain grid,
+        /// keeps the simplified groups and the forest line at the distance they are built for, and nothing visible ends up behind the far plane.
+        /// </summary>
+        static void WalkAreaHoldsUp(SceneData d, List<string> v)
+        {
+            if (d.Walk == null) return;
+            if (d.Walk.Distance(new Vector2(0f, 0f)) > -1f) v.Add("The standing spot is not inside the walk area (at least 1 m from its edge).");
+            WalkStats st = MeasureWalk(d);
+            if (st.PathMetres < MinWalkablePath) v.Add("The walk area follows the path for only " + st.PathMetres.ToString("0") + " m (at least " + MinWalkablePath + " m).");
+            if (st.UnreachedCells > 0) v.Add(st.UnreachedCells + " m² of the walk area cannot be reached from the start.");
+            if (st.CoarseCells > 0) v.Add("Walkable ground at (" + st.CoarseAt.x + ", " + st.CoarseAt.y + ") lies outside the fine terrain grid.");
+            var reach = new WalkArea(d.Terrain, Plan.WalkOutline, new List<WalkArea.Disc>());
+            foreach (var t in d.Trees)
+            {
+                if (t.FullDetail || t.Tier == TreeTier.Mid || t.Tier == TreeTier.Far) continue;
+                if (t.Kind == TreeKind.Shrub && t.Spread > 1.5f) continue;   // large bushes always have the fine facets
+                float gap = reach.Distance(new Vector2(t.Position.x, t.Position.z));
+                if (gap < FullDetailDistance) { v.Add(t.Kind + " at " + At(t.Position) + " is " + gap.ToString("0") + " m from walkable ground but not built at full detail."); break; }
+            }
+            if (st.NearestMid < MidTreeMinDistance)
+                v.Add("A simplified tree at (" + st.NearestMidAt.x.ToString("0") + ", " + st.NearestMidAt.y.ToString("0") + ") is only " + st.NearestMid.ToString("0") + " m from walkable ground (at least " + MidTreeMinDistance + " m).");
+            if (LandscapeBuilder.ForestLineRadius - st.Reach < ForestLineMinDistance)
+                v.Add("Walkable ground reaches " + st.Reach.ToString("0") + " m from the start: the forest line would come closer than " + ForestLineMinDistance + " m.");
+            if (st.FarthestView > WalkArea.FarClip - 2f)
+                v.Add("From walkable ground the farthest geometry is up to " + st.FarthestView.ToString("0") + " m away, beyond the far plane (" + WalkArea.FarClip + " m).");
         }
 
         static string At(Vector3 p) { return "(" + p.x.ToString("0.0") + ", " + p.z.ToString("0.0") + ")"; }

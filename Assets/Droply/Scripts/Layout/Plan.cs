@@ -164,5 +164,18 @@ namespace Droply.Landscape
 
         /// <summary>The path leads to this azimuth (degrees): forest line and hills dip here so the view opens along the path.</summary>
         public const float OpeningAzimuth = 4f;
+
+        /// <summary>
+        /// Where the viewer may walk: an organic outline (smoothed through these points, x and z in metres) around the meadow and along the path down to the swale,
+        /// narrowing between the forest clumps, which stay at least 15 m away (they are the forest edge, built to be seen from 15 to 40 m). Trunks, bushes and stones inside it are kept clear by <see cref="WalkArea"/>. It ends where the composition would stop
+        /// holding up from closer by: before the side bushes, before the forest clumps, on the fine terrain grid, far enough from the simplified groups and the forest line
+        /// (all of it measured by <see cref="LandscapeChecks"/>).
+        /// </summary>
+        public static readonly Vector2[] WalkOutline =
+        {
+            new Vector2(0f, -7f), new Vector2(8f, -5f), new Vector2(14f, 1f), new Vector2(18f, 10f), new Vector2(19.5f, 20f), new Vector2(19f, 32f), new Vector2(15f, 39f),
+            new Vector2(8f, 45.5f), new Vector2(5.5f, 54f), new Vector2(3f, 62f), new Vector2(-2f, 67f), new Vector2(-8f, 64f), new Vector2(-11f, 57f),
+            new Vector2(-13f, 49f), new Vector2(-18f, 42f), new Vector2(-21f, 33f), new Vector2(-20.5f, 25f), new Vector2(-19f, 17f), new Vector2(-15f, 7f), new Vector2(-9f, -1f), new Vector2(-5f, -5.5f),
+        };
     }
 }

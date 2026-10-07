@@ -39,6 +39,9 @@ namespace Droply.CompositionCheck
             Console.WriteLine("Trees: hero " + Get(byTier, TreeTier.Hero) + ", edge " + Get(byTier, TreeTier.Edge) + ", mid " + Get(byTier, TreeTier.Mid) +
                               "; grass tufts " + data.GrassClumps.Count + " (+ " + data.EdgeTufts.Count + " at the path edge, " + data.FleckCount + " flecks), flowers " + data.Flowers.Count + " on " +
                               data.IslandCenters.Count + " islands, stones " + data.Rocks.Count + " (+ " + data.Pebbles.Count + " pebbles)");
+            var reachable = new List<string>();
+            foreach (var t in data.Trees) if (t.FullDetail && t.Tier != TreeTier.Hero) reachable.Add(t.Kind + " (" + t.Position.x.ToString("0") + ", " + t.Position.z.ToString("0") + ") " + t.Triangles);
+            Console.WriteLine("Outside the character group at full detail (the viewer can walk up to them): " + reachable.Count + (reachable.Count > 0 ? ": " + string.Join(", ", reachable) : ""));
             Console.WriteLine("Triangles per tree: hero " + LandscapeChecks.AverageTriangles(data, TreeTier.Hero).ToString("0") + ", edge " +
                               LandscapeChecks.AverageTriangles(data, TreeTier.Edge).ToString("0") + ", mid " + LandscapeChecks.AverageTriangles(data, TreeTier.Mid).ToString("0"));
             float share, widest; int corridors;
@@ -49,6 +52,11 @@ namespace Droply.CompositionCheck
             LandscapeChecks.Relief(data, out slope, out relief, out error);
             Console.WriteLine("Open view directions " + (share * 100f).ToString("0") + " % (" + (allShare * 100f).ToString("0") + " % counting the distant groups), widest corridor " + widest + " deg, " + corridors + " corridors; relief " +
                               relief.ToString("0.0") + " m, steepest " + slope.ToString("0.0") + " deg, mesh error " + error.ToString("0.00") + " m");
+
+            var walk = LandscapeChecks.MeasureWalk(data);
+            Console.WriteLine("Walk area " + walk.AreaSquareMetres.ToString("0") + " m² (" + data.Walk.Obstacles.Length + " trunks, bushes and stones kept clear), path walkable for " + walk.PathMetres.ToString("0") +
+                              " m, reaches " + walk.Reach.ToString("0") + " m from the start; nearest simplified tree " + walk.NearestMid.ToString("0") + " m, farthest visible geometry " +
+                              walk.FarthestView.ToString("0") + " m (far plane " + WalkArea.FarClip + " m)");
 
             if (args.Length >= 2 && args[0] == "export") { Export(data, args[1]); Console.WriteLine("Exported " + args[1]); }
 
@@ -142,6 +150,12 @@ namespace Droply.CompositionCheck
                 if (s > 0f) sb.Append(',');
                 sb.Append("[" + Number(p.x) + "," + Number(p.z) + "]");
             }
+            sb.Append("],\"walk\":[");
+            Vector2[] outline = data.Walk.Outline;
+            for (int i = 0; i < outline.Length; i++) sb.Append((i > 0 ? "," : "") + "[" + Number(outline[i].x) + "," + Number(outline[i].y) + "]");
+            sb.Append("],\"obstacles\":[");
+            WalkArea.Disc[] obstacles = data.Walk.Obstacles;
+            for (int i = 0; i < obstacles.Length; i++) sb.Append((i > 0 ? "," : "") + "[" + Number(obstacles[i].Centre.x) + "," + Number(obstacles[i].Centre.y) + "," + Number(obstacles[i].Radius) + "]");
             sb.Append("],\"trees\":[");
             for (int i = 0; i < data.Trees.Count; i++)
             {

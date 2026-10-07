@@ -29,6 +29,8 @@ namespace Droply.Landscape
         public long BakeMilliseconds;
         public PathModel Path;
         public TerrainModel Terrain;
+        /// <summary>Where the viewer may walk (null in hand-made test scenes).</summary>
+        public WalkArea Walk;
 
         public int TriangleCount
         {
@@ -44,6 +46,10 @@ namespace Droply.Landscape
     public static class LandscapeBuilder
     {
         const int Seed = 3157;
+        /// <summary>Radius of the nearest forest line (a silhouette ribbon around the start).</summary>
+        public const float ForestLineRadius = 150f;
+        /// <summary>Radius of the farthest hill layer: the ground behind it is hidden.</summary>
+        public const float OutermostHills = 288f;
         const float Deg = Mathf.PI / 180f;
 
         public static SceneData Build()
@@ -54,15 +60,17 @@ namespace Droply.Landscape
 
             AddTerrain(data);
             AddPath(data);
-            AddHeroGroup(data, layers, root.Fork(1));
-            foreach (var cluster in Plan.EdgeClusters) AddCluster(data, layers, cluster, TreeTier.Edge, root.Fork(10 + data.Trees.Count));
-            foreach (var cluster in Plan.MidClusters) AddCluster(data, layers, cluster, TreeTier.Mid, root.Fork(100 + data.Trees.Count));
+            // what the viewer can walk up to gets full detail (the outline alone: trunks and stones do not matter for that)
+            var reach = new WalkArea(data.Terrain, Plan.WalkOutline, new List<WalkArea.Disc>());
+            AddHeroGroup(data, layers, root.Fork(1), reach);
+            foreach (var cluster in Plan.EdgeClusters) AddCluster(data, layers, cluster, TreeTier.Edge, root.Fork(10 + data.Trees.Count), reach);
+            foreach (var cluster in Plan.MidClusters) AddCluster(data, layers, cluster, TreeTier.Mid, root.Fork(100 + data.Trees.Count), reach);
             // Each layer peeks over the one in front (angular height grows with distance) and is paler and bluer-green: forest line 1.2-2.3 deg, then 2-3 deg, hills 3-7 deg.
-            AddForestLine(data, layers.Get(Mat.TreeLineNear, false), 150f, 1.8f, 4.5f, 8.5f, 3f, 6f, root.Fork(3));
+            AddForestLine(data, layers.Get(Mat.TreeLineNear, false), ForestLineRadius, 1.8f, 4.5f, 8.5f, 3f, 6f, root.Fork(3));
             AddForestLine(data, layers.Get(Mat.TreeLineFar, false), 186f, 3.5f, 5.5f, 10f, 4f, 7.5f, root.Fork(4));
             AddHills(data, layers.Get(Mat.Hill1, false), 206f, 10f, 13f, 7, root.Fork(5));
             AddHills(data, layers.Get(Mat.Hill2, false), 246f, 15f, 19f, 8, root.Fork(6));
-            AddHills(data, layers.Get(Mat.Hill3, false), 288f, 22f, 27f, 9, root.Fork(7));
+            AddHills(data, layers.Get(Mat.Hill3, false), OutermostHills, 22f, 27f, 9, root.Fork(7));
             AddGrass(data, layers, root.Fork(8));
             AddPathTufts(data, layers, root.Fork(13));
             AddPebbles(data, layers, root.Fork(15));
@@ -71,6 +79,7 @@ namespace Droply.Landscape
             AddRocks(data, layers, root.Fork(11));
             AddClouds(layers, layers.Get(Mat.CloudTop, false), layers.Get(Mat.CloudBottom, false), root.Fork(12));
 
+            data.Walk = WalkArea.For(data);
             data.Layers.AddRange(layers.Finish());
             data.OccluderCount = layers.Occluders.Count;
             var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -152,7 +161,7 @@ namespace Droply.Landscape
 
         static Vector3 OnGround(SceneData data, float x, float z) { return new Vector3(x, data.Terrain.SurfaceY(x, z), z); }
 
-        static void AddHeroGroup(SceneData data, LayerSet layers, Rng rng)
+        static void AddHeroGroup(SceneData data, LayerSet layers, Rng rng, WalkArea reach)
         {
             for (int i = 0; i < Plan.HeroGroup.Length; i++)
             {
@@ -167,7 +176,8 @@ namespace Droply.Landscape
             for (int i = 0; i < Plan.SideBushes.Length; i++)
             {
                 var bush = Plan.SideBushes[i];
-                data.Trees.Add(TreeFactory.Build(layers, TreeKind.Shrub, TreeTier.Edge, OnGround(data, bush.Position.x, bush.Position.y), bush.Size, bush.Size, rng.Fork(70 + i), Mat.HazeTree1));
+                data.Trees.Add(TreeFactory.Build(layers, TreeKind.Shrub, TreeTier.Edge, OnGround(data, bush.Position.x, bush.Position.y), bush.Size, bush.Size, rng.Fork(70 + i), Mat.HazeTree1,
+                    reach.Distance(bush.Position) < LandscapeChecks.FullDetailDistance));
             }
         }
 
@@ -195,7 +205,7 @@ namespace Droply.Landscape
         /// A forest clump: trees dropped into an ellipse with rejection (crowns may overlap a little but never stack into a wall, nothing on the path),
         /// tallest in the middle and shorter towards the rim. No grid, no rows.
         /// </summary>
-        static void AddCluster(SceneData data, LayerSet layers, Plan.Cluster c, TreeTier tier, Rng rng)
+        static void AddCluster(SceneData data, LayerSet layers, Plan.Cluster c, TreeTier tier, Rng rng, WalkArea reach)
         {
             bool simple = tier != TreeTier.Edge;
             float gap = simple ? .52f : .66f;
@@ -220,7 +230,8 @@ namespace Droply.Landscape
                 }
                 if (!free) continue;
                 if (LandscapeChecks.RowThrough(Positions(data), new Vector2(x, z)) >= 4) continue;
-                data.Trees.Add(TreeFactory.Build(layers, kind, tier, OnGround(data, x, z), height, spread, rng.Fork(attempt), haze));
+                bool reachable = reach.Distance(new Vector2(x, z)) < LandscapeChecks.FullDetailDistance;
+                data.Trees.Add(TreeFactory.Build(layers, kind, tier, OnGround(data, x, z), height, spread, rng.Fork(attempt), haze, reachable));
                 placed++;
             }
             if (tier != TreeTier.Edge) return;
@@ -230,7 +241,8 @@ namespace Droply.Landscape
                 float a = rng.Value() * Mathf.PI * 2f, r = rng.Range(.8f, 1.2f);
                 float x = c.Center.x + Mathf.Cos(a) * r * c.RadiusX, z = c.Center.y + Mathf.Sin(a) * r * c.RadiusZ;
                 if (data.Path.EdgeDistance(x, z) < 3f) continue;
-                data.Trees.Add(TreeFactory.Build(layers, TreeKind.Shrub, TreeTier.Edge, OnGround(data, x, z), 1f, rng.Range(.9f, 1.4f), rng.Fork(900 + attempt), haze));
+                data.Trees.Add(TreeFactory.Build(layers, TreeKind.Shrub, TreeTier.Edge, OnGround(data, x, z), 1f, rng.Range(.9f, 1.4f), rng.Fork(900 + attempt), haze,
+                    reach.Distance(new Vector2(x, z)) < LandscapeChecks.FullDetailDistance));
                 made++;
             }
         }

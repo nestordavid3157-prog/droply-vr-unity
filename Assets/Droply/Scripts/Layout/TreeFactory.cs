@@ -14,6 +14,8 @@ namespace Droply.Landscape
         public float Height, Spread;
         public TreeKind Kind;
         public TreeTier Tier;
+        /// <summary>Built with the full detail of the character group: a tree the viewer can walk up to, whatever its role in the composition.</summary>
+        public bool FullDetail;
         public int Triangles;
     }
 
@@ -86,24 +88,43 @@ namespace Droply.Landscape
     /// </summary>
     public static class TreeFactory
     {
-        public static TreeRecord Build(LayerSet layers, TreeKind kind, TreeTier tier, Vector3 position, float height, float spread, Rng rng, Mat haze)
+        /// <param name="reachable">The viewer can walk up to it (see <see cref="WalkArea"/>): it gets the full detail of the character group, whatever its tier.</param>
+        public static TreeRecord Build(LayerSet layers, TreeKind kind, TreeTier tier, Vector3 position, float height, float spread, Rng rng, Mat haze, bool reachable = false)
         {
             int before = layers.TriangleCount;
             layers.CurrentOwner = layers.NewOwner();
             bool shadows = tier == TreeTier.Hero || tier == TreeTier.Edge;
+            bool full = tier == TreeTier.Hero || reachable;
             switch (kind)
             {
-                case TreeKind.Oak: Oak(layers, position, height, spread, rng, shadows, tier == TreeTier.Hero ? 1 : 0, tier == TreeTier.Hero ? 11 : 7); break;
-                case TreeKind.Beech: Beech(layers, position, height, spread, rng, shadows, tier == TreeTier.Hero ? 1 : 0); break;
-                case TreeKind.Birch: Birch(layers, position, height, spread, rng, shadows, tier == TreeTier.Hero ? 1 : 0); break;
-                case TreeKind.Spruce: Spruce(layers, position, height, spread, rng, shadows, tier == TreeTier.Hero ? 7 : 6, tier == TreeTier.Hero ? 6 : 5); break;
-                case TreeKind.Shrub: Shrub(layers, position, spread, rng, shadows, spread > 1.5f ? 1 : 0); break;
+                case TreeKind.Oak: Oak(layers, position, height, spread, rng, shadows, full ? 1 : 0, full ? 11 : 7); break;
+                case TreeKind.Beech: Beech(layers, position, height, spread, rng, shadows, full ? 1 : 0); break;
+                case TreeKind.Birch: Birch(layers, position, height, spread, rng, shadows, full ? 1 : 0); break;
+                case TreeKind.Spruce: Spruce(layers, position, height, spread, rng, shadows, full ? 7 : 6, full ? 6 : 5); break;
+                case TreeKind.Shrub: Shrub(layers, position, spread, rng, shadows, full || spread > 1.5f ? 1 : 0); break;
                 case TreeKind.Blob: Blob(layers, position, height, spread, rng, haze); break;
                 default: BlobSpruce(layers, position, height, spread, rng, haze); break;
             }
             layers.CurrentOwner = 0;
-            return new TreeRecord { Position = position, Height = height, Spread = spread, Kind = kind, Tier = tier, Triangles = layers.TriangleCount - before };
+            bool detailed = full && kind != TreeKind.Blob && kind != TreeKind.BlobSpruce;
+            return new TreeRecord { Position = position, Height = height, Spread = spread, Kind = kind, Tier = tier, FullDetail = detailed, Triangles = layers.TriangleCount - before };
         }
+
+        /// <summary>Trunk radius above the root flare, by kind and height (metres). The trees are built with it, and the walk area keeps the body clear of it.</summary>
+        public static float BaseRadius(TreeKind kind, float h)
+        {
+            switch (kind)
+            {
+                case TreeKind.Oak: return Mathf.Max(.13f, .04f * h);
+                case TreeKind.Beech: return Mathf.Max(.1f, .031f * h);
+                case TreeKind.Birch: return Mathf.Max(.06f, .018f * h);
+                case TreeKind.Spruce: return Mathf.Max(.1f, .028f * h);
+                default: return 0f;
+            }
+        }
+
+        /// <summary>Widest trunk radius at the ground (the root flare: 1.3 to 1.4 times <see cref="BaseRadius"/>).</summary>
+        public static float FootRadius(TreeKind kind, float h) { return BaseRadius(kind, h) * (kind == TreeKind.Oak ? 1.4f : kind == TreeKind.Birch ? 1.35f : 1.3f); }
 
         static Mat CrownMaterial(float f, Rng rng, Mat top, Mat mid, Mat dark)
         {
@@ -122,7 +143,7 @@ namespace Droply.Landscape
         static void Oak(LayerSet layers, Vector3 pos, float h, float spread, Rng rng, bool shadows, int subdivisions, int lobes)
         {
             var bark = layers.Get(Mat.Trunk, shadows);
-            float r0 = Mathf.Max(.13f, .04f * h);
+            float r0 = BaseRadius(TreeKind.Oak, h);
             float lean = rng.Signed() * .3f * h / 9f, forkY = .33f * h;
             Vector3 fork = pos + new Vector3(lean, forkY, lean * .3f);
             Shapes.Tube(bark, new[] { pos + Vector3.down * .3f, pos + new Vector3(lean * .15f, forkY * .4f, 0f), pos + new Vector3(lean * .6f, forkY * .75f, lean * .2f), fork },
@@ -161,7 +182,7 @@ namespace Droply.Landscape
         static void Beech(LayerSet layers, Vector3 pos, float h, float spread, Rng rng, bool shadows, int subdivisions)
         {
             var bark = layers.Get(Mat.Trunk, shadows);
-            float r0 = Mathf.Max(.1f, .031f * h);
+            float r0 = BaseRadius(TreeKind.Beech, h);
             float lean = rng.Signed() * .25f * h / 9f, forkY = .4f * h;
             Vector3 fork = pos + new Vector3(lean, forkY, lean * .2f);
             Shapes.Tube(bark, new[] { pos + Vector3.down * .3f, pos + new Vector3(lean * .1f, forkY * .35f, 0f), pos + new Vector3(lean * .55f, forkY * .72f, lean * .1f), fork },
@@ -199,7 +220,7 @@ namespace Droply.Landscape
         static void Birch(LayerSet layers, Vector3 pos, float h, float spread, Rng rng, bool shadows, int subdivisions)
         {
             var bark = layers.Get(Mat.BirchBark, shadows);
-            float r0 = Mathf.Max(.06f, .018f * h);
+            float r0 = BaseRadius(TreeKind.Birch, h);
             float lean = rng.Signed() * .5f, lean2 = rng.Signed() * .5f;
             Vector3 top = pos + new Vector3(lean, .78f * h, lean2);
             Shapes.Tube(bark, new[] { pos + Vector3.down * .3f, pos + new Vector3(lean * .15f, .25f * h, lean2 * .1f), pos + new Vector3(lean * .55f, .52f * h, lean2 * .5f), top },
@@ -233,7 +254,7 @@ namespace Droply.Landscape
         static void Spruce(LayerSet layers, Vector3 pos, float h, float spread, Rng rng, bool shadows, int tiers, int sides)
         {
             Shapes.Tube(layers.Get(Mat.Trunk, shadows), new[] { pos + Vector3.down * .3f, pos + Vector3.up * (.5f * h), pos + Vector3.up * (.84f * h) },
-                new[] { Mathf.Max(.1f, .028f * h) * 1.3f, Mathf.Max(.1f, .028f * h) * .8f, .05f }, 6, rng, .05f, false);
+                new[] { BaseRadius(TreeKind.Spruce, h) * 1.3f, BaseRadius(TreeKind.Spruce, h) * .8f, .05f }, 6, rng, .05f, false);
             for (int i = 0; i < tiers; i++)
             {
                 float t = tiers > 1 ? (float)i / (tiers - 1) : 0f;

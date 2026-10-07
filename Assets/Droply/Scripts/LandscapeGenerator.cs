@@ -9,7 +9,8 @@ namespace Droply.Landscape
     /// <summary>
     /// Unity side of the landscape. The composition (terrain, path, trees, meadow details, distance layers, sky) is built as plain data by
     /// <see cref="LandscapeBuilder"/> from <see cref="Plan"/>, with the light already baked into the vertex colours (<see cref="Lighting"/>).
-    /// This component turns that data into static meshes (one per layer, a few dozen draw calls, no per-frame script work).
+    /// This component turns that data into static meshes (one per layer, a few dozen draw calls) and keeps the walk area for <see cref="ViewerLocomotion"/>.
+    /// Its only per-frame work: the sky dome and the sun follow the camera (they are "at infinity", so walking never brings them closer).
     /// <para>
     /// Baked pipeline (normal case): every layer is drawn with the tiny unlit shader "Droply/Vertex Colour Unlit": no lights, no shadow maps, no skybox, no textures.
     /// Lit fallback (only if that shader is missing or not supported on the device): URP Lit with one flat colour per material, a real warm sun with soft shadows,
@@ -26,6 +27,12 @@ namespace Droply.Landscape
         public Shader litShader;
         public Shader unlitShader;
 
+        /// <summary>Where the viewer may walk (built with the landscape).</summary>
+        public WalkArea WalkArea { get; private set; }
+
+        Transform skyDome, sunDisc;
+        Camera viewer;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void BuildIfEmpty()
         {
@@ -39,6 +46,7 @@ namespace Droply.Landscape
             if (transform.Find("Generated Landscape") != null) return;
             var watch = Stopwatch.StartNew();
             SceneData data = LandscapeBuilder.Build();
+            WalkArea = data.Walk;
             long built = watch.ElapsedMilliseconds;
             var content = new GameObject("Generated Landscape").transform;
             content.SetParent(transform, false);
@@ -71,8 +79,21 @@ namespace Droply.Landscape
             {
                 Material material = layer.Material == Mat.Sky ? sky : layer.Material == Mat.SunDisc ? sun : Palette.DoubleSided(layer.Material) ? twoSided : solid;
                 // Colours instead of normals: the shader reads the first and never the second (position + colour = 16 bytes per vertex, position + normal would be 24).
-                AddRenderer(layer, parent, material, CreateMesh(layer.Mesh, layer.Name, true), false, false);
+                Transform t = AddRenderer(layer, parent, material, CreateMesh(layer.Mesh, layer.Name, true), false, false);
+                if (layer.Material == Mat.Sky) skyDome = t;
+                else if (layer.Material == Mat.SunDisc) sunDisc = t;
             }
+        }
+
+        /// <summary>The sky is at infinity: the dome and the sun move with the eye, so walking never brings them closer or lets the far plane cut into them.</summary>
+        void LateUpdate()
+        {
+            if (skyDome == null) return;
+            if (viewer == null) viewer = Camera.main;
+            if (viewer == null) return;
+            Vector3 eye = viewer.transform.position;
+            skyDome.position = eye;
+            if (sunDisc != null) sunDisc.position = eye;
         }
 
         static Material BakedMaterial(Shader shader, string name, CullMode cull, bool depthWrite, int queue)
@@ -160,7 +181,7 @@ namespace Droply.Landscape
 
         // ---- shared ---------------------------------------------------------------------------------------------------------------------
 
-        static void AddRenderer(MeshLayer layer, Transform parent, Material material, Mesh mesh, bool castShadows, bool receiveShadows)
+        static Transform AddRenderer(MeshLayer layer, Transform parent, Material material, Mesh mesh, bool castShadows, bool receiveShadows)
         {
             var go = new GameObject(layer.Name);
             go.transform.SetParent(parent, false);
@@ -171,6 +192,7 @@ namespace Droply.Landscape
             renderer.receiveShadows = receiveShadows;
             renderer.lightProbeUsage = LightProbeUsage.Off;
             renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+            return go.transform;
         }
 
         /// <summary>One static mesh. <paramref name="baked"/>: vertex colours (final colour of each vertex), otherwise normals (the lit fallback computes its own light).</summary>
@@ -188,14 +210,14 @@ namespace Droply.Landscape
 
         /// <summary>
         /// Camera for both pipelines. Baked: the dome is the sky, so the camera only clears to the horizon colour (nothing but the dome shows it).
-        /// Far plane 340 m: the dome is 325 m away and the farthest hill layer about 290 m.
+        /// Far plane: the dome follows the eye at 325 m; everything else stays within <see cref="WalkArea.FarClip"/> from every walkable point (checked).
         /// </summary>
         static void ConfigureCamera(bool baked)
         {
             var camera = Camera.main;
             if (camera == null) return;
             camera.nearClipPlane = .1f;
-            camera.farClipPlane = 340f;
+            camera.farClipPlane = WalkArea.FarClip;
             if (baked)
             {
                 camera.clearFlags = CameraClearFlags.SolidColor;

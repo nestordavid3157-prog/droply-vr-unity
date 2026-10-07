@@ -10,6 +10,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.XR.Management;
+using UnityEngine.XR.OpenXR;
 
 namespace Droply.Editor
 {
@@ -35,13 +36,15 @@ namespace Droply.Editor
             if (generator.litShader == null || generator.unlitShader == null)
                 Debug.LogWarning("The URP Lit/Unlit shaders were not found; check that the Universal RP package is installed.");
 
-            var cameraRoot = new GameObject("Tracked viewpoint");
+            // The tracking space (moved by walking, its floor on the ground) with the tracked camera inside it.
+            var trackingSpace = new GameObject("Tracking space");
+            trackingSpace.AddComponent<ViewerLocomotion>();
             var camera = new GameObject("Main Camera").AddComponent<Camera>();
-            camera.transform.SetParent(cameraRoot.transform, false);
+            camera.transform.SetParent(trackingSpace.transform, false);
             camera.tag = "MainCamera";
             camera.nearClipPlane = .1f;
-            camera.farClipPlane = 340; // the farthest hill layer is about 290 m away
-            cameraRoot.AddComponent<HeadsetPose>();
+            camera.farClipPlane = WalkArea.FarClip; // the sky follows the eye; everything else stays within this from every walkable point
+            camera.gameObject.AddComponent<HeadsetPose>();
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
@@ -78,6 +81,46 @@ namespace Droply.Editor
             androidSettings.Manager.automaticLoading = true;
             androidSettings.Manager.automaticRunning = true;
             EditorUtility.SetDirty(androidSettings.Manager);
+            EnableQuestFeatures();
+        }
+
+        /// <summary>
+        /// OpenXR features the app needs on the Quest: "Meta Quest Support" (the Android build runs as a Quest VR app) and the controller profiles
+        /// (Oculus Touch and Meta Quest Touch Plus, the Quest 3S controllers), without which the thumbsticks report nothing and walking does not work.
+        /// Matched by type name so the setup does not depend on the namespaces of individual features.
+        /// </summary>
+        static readonly string[] QuestFeatures = { "MetaQuestFeature", "OculusTouchControllerProfile", "MetaQuestTouchPlusControllerProfile" };
+
+        static void EnableQuestFeatures()
+        {
+            var openXR = OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
+            if (openXR == null) { Debug.LogWarning("OpenXR settings for Android were not found: enable Meta Quest Support and the Touch controller profiles by hand."); return; }
+            foreach (string name in QuestFeatures)
+            {
+                bool found = false;
+                foreach (var feature in openXR.GetFeatures())
+                {
+                    if (feature == null || feature.GetType().Name != name) continue;
+                    found = true;
+                    if (!feature.enabled) { feature.enabled = true; EditorUtility.SetDirty(feature); }
+                }
+                if (!found) Debug.LogWarning("OpenXR feature " + name + " was not found for Android; enable it in Project Settings > XR Plug-in Management > OpenXR.");
+            }
+            EditorUtility.SetDirty(openXR);
+        }
+
+        static bool QuestFeaturesEnabled(out string missing)
+        {
+            missing = "";
+            var openXR = OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
+            if (openXR == null) { missing = "OpenXR settings for Android"; return false; }
+            foreach (string name in QuestFeatures)
+            {
+                bool on = false;
+                foreach (var feature in openXR.GetFeatures()) if (feature != null && feature.GetType().Name == name && feature.enabled) on = true;
+                if (!on) missing += (missing.Length > 0 ? ", " : "") + name;
+            }
+            return missing.Length == 0;
         }
 
         static void ConfigureQuestPlayer()
@@ -139,6 +182,11 @@ namespace Droply.Editor
             var poses = Object.FindObjectsByType<HeadsetPose>();
             if (poses.Length != 1) throw new BuildFailedException("The main viewpoint must use headset tracking.");
             if (poses[0].transform.localPosition != Vector3.zero) throw new BuildFailedException("The tracked camera rig must not impose a headset height.");
+            if (poses[0].transform.parent == null || poses[0].transform.parent.GetComponent<ViewerLocomotion>() == null)
+                throw new BuildFailedException("The tracked camera must sit inside a tracking space with ViewerLocomotion (walking and snap turns): run \"Droply > Generate and configure landscape\".");
+            string missingFeatures;
+            if (!QuestFeaturesEnabled(out missingFeatures))
+                Debug.LogWarning("Not enabled for Android: " + missingFeatures + ". Without the controller profiles the thumbsticks do nothing; without Meta Quest Support the app does not run as a Quest app.");
             string[] forbidden = { "House", "Building", "Architecture", "Furniture", "Device", "Sign", "Text", "Logo", "Canvas" };
             foreach (var root in scene.GetRootGameObjects())
                 foreach (string term in forbidden)
@@ -149,7 +197,7 @@ namespace Droply.Editor
             foreach (var tree in composition.Trees) if (tree.Tier == TreeTier.Hero && tree.Kind != TreeKind.Shrub) heroTrees++;
             Debug.Log("Landscape validation passed: " + composition.TriangleCount + " triangles in " + composition.Layers.Count + " layers, tree group=" + heroTrees +
                 ", flower islands=" + composition.IslandCenters.Count + ", stones=" + composition.Rocks.Count +
-                ", tracked main camera with no forced height.");
+                ", tracked main camera with no forced height, walk area " + LandscapeChecks.MeasureWalk(composition).AreaSquareMetres.ToString("0") + " m2.");
         }
 
         static void ValidateGeneratedLandscape(LandscapeGenerator generator, string[] forbidden)

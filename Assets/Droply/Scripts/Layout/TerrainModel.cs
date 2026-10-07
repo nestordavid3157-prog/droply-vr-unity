@@ -13,6 +13,9 @@ namespace Droply.Landscape
     {
         const float Extent = 300f;
 
+        /// <summary>The fine (1.25 m) part of the grid, where the composition is: the walk area stays inside it.</summary>
+        public const float DenseMinX = -30f, DenseMaxX = 30f, DenseMinZ = -14f, DenseMaxZ = 74f;
+
         public static float Gauss(float x, float z, float cx, float cz, float sx, float sz, float amp)
         {
             float dx = (x - cx) / sx, dz = (z - cz) / sz;
@@ -60,8 +63,8 @@ namespace Droply.Landscape
 
         public TerrainModel()
         {
-            Xs = Axis(-30f, 30f);
-            Zs = Axis(-14f, 74f);
+            Xs = Axis(DenseMinX, DenseMaxX);
+            Zs = Axis(DenseMinZ, DenseMaxZ);
             nx = Xs.Length; nz = Zs.Length;
             heights = new float[nx * nz];
             for (int j = 0; j < nz; j++)

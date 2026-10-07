@@ -38,6 +38,12 @@ namespace UnityEngine
     {
         public float x, y;
         public Vector2(float x, float y) { this.x = x; this.y = y; }
+        public static Vector2 zero { get { return new Vector2(0f, 0f); } }
+        public float sqrMagnitude { get { return x * x + y * y; } }
+        public float magnitude { get { return (float)Math.Sqrt(x * x + y * y); } }
+        public Vector2 normalized { get { float m = magnitude; return m > 0.00001f ? new Vector2(x / m, y / m) : zero; } }
+        public static float Dot(Vector2 a, Vector2 b) { return a.x * b.x + a.y * b.y; }
+        public static Vector2 operator /(Vector2 a, float d) { return new Vector2(a.x / d, a.y / d); }
         public static Vector2 operator +(Vector2 a, Vector2 b) { return new Vector2(a.x + b.x, a.y + b.y); }
         public static Vector2 operator -(Vector2 a, Vector2 b) { return new Vector2(a.x - b.x, a.y - b.y); }
         public static Vector2 operator -(Vector2 a) { return new Vector2(-a.x, -a.y); }
