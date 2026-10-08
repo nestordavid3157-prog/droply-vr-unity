@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Compile guard, not part of the Unity project. Compiles the runtime scripts (Assets/Droply/Scripts) against the real UnityEngine module assemblies
+       (NuGet package UnityEngine.Modules, Unity 2021.3 API surface; the project itself uses Unity 6) so a typo or a missing API shows up before Unity opens the project.
+       It cannot run anything (those assemblies only work inside Unity) and does not cover Assets/Droply/Editor (needs UnityEditor, URP and XR packages).
+       Run: dotnet build Tools/CompileCheck -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>NU1701</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../Assets/Droply/Scripts/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" />
+  </ItemGroup>
+
+</Project>

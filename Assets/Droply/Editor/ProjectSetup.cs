@@ -11,13 +11,14 @@ using UnityEngine.SceneManagement;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.XR.Management;
-using Object = UnityEngine.Object;
+using UnityEngine.XR.OpenXR;
 
 namespace Droply.Editor
 {
     public static class ProjectSetup
     {
         const string ScenePath = "Assets/Droply/Scenes/Meadow.unity";
+        const string BakedShaderPath = "Assets/Droply/Shaders/VertexColorUnlit.shader";
 
         [MenuItem("Droply/Generate and configure landscape")]
         public static void Generate()
@@ -25,17 +26,26 @@ namespace Droply.Editor
             Directory.CreateDirectory("Assets/Droply/Scenes");
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             var root = new GameObject("Meadow Landscape");
-            root.AddComponent<LandscapeGenerator>();
+            var generator = root.AddComponent<LandscapeGenerator>();
+            // Serialized shader references keep the shaders in Quest builds (the generator creates its materials at runtime).
+            // The vertex colour shader draws the baked landscape; the URP shaders only serve the lit fallback.
+            generator.vertexColorShader = AssetDatabase.LoadAssetAtPath<Shader>(BakedShaderPath);
+            generator.litShader = Shader.Find("Universal Render Pipeline/Lit");
+            generator.unlitShader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (generator.vertexColorShader == null)
+                Debug.LogError("The vertex colour shader was not found at " + BakedShaderPath + "; the landscape would fall back to the plain lit look.");
+            if (generator.litShader == null || generator.unlitShader == null)
+                Debug.LogWarning("The URP Lit/Unlit shaders were not found; check that the Universal RP package is installed.");
 
-            var cameraRoot = new GameObject("Tracked viewpoint");
+            // The tracking space (moved by walking, its floor on the ground) with the tracked camera inside it.
+            var trackingSpace = new GameObject("Tracking space");
+            trackingSpace.AddComponent<ViewerLocomotion>();
             var camera = new GameObject("Main Camera").AddComponent<Camera>();
-            camera.transform.SetParent(cameraRoot.transform, false);
+            camera.transform.SetParent(trackingSpace.transform, false);
             camera.tag = "MainCamera";
-            camera.nearClipPlane = .08f;
-            camera.farClipPlane = 190;
-            camera.clearFlags = CameraClearFlags.Skybox;
-            cameraRoot.AddComponent<HeadsetPose>();
-            cameraRoot.AddComponent<ComfortableLocomotion>();
+            camera.nearClipPlane = .1f;
+            camera.farClipPlane = WalkArea.FarClip; // the sky follows the eye; everything else stays within this from every walkable point
+            camera.gameObject.AddComponent<HeadsetPose>();
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
@@ -72,6 +82,46 @@ namespace Droply.Editor
             androidSettings.Manager.automaticLoading = true;
             androidSettings.Manager.automaticRunning = true;
             EditorUtility.SetDirty(androidSettings.Manager);
+            EnableQuestFeatures();
+        }
+
+        /// <summary>
+        /// OpenXR features the app needs on the Quest: "Meta Quest Support" (the Android build runs as a Quest VR app) and the controller profiles
+        /// (Oculus Touch and Meta Quest Touch Plus, the Quest 3S controllers), without which the thumbsticks report nothing and walking does not work.
+        /// Matched by type name so the setup does not depend on the namespaces of individual features.
+        /// </summary>
+        static readonly string[] QuestFeatures = { "MetaQuestFeature", "OculusTouchControllerProfile", "MetaQuestTouchPlusControllerProfile" };
+
+        static void EnableQuestFeatures()
+        {
+            var openXR = OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
+            if (openXR == null) { Debug.LogWarning("OpenXR settings for Android were not found: enable Meta Quest Support and the Touch controller profiles by hand."); return; }
+            foreach (string name in QuestFeatures)
+            {
+                bool found = false;
+                foreach (var feature in openXR.GetFeatures())
+                {
+                    if (feature == null || feature.GetType().Name != name) continue;
+                    found = true;
+                    if (!feature.enabled) { feature.enabled = true; EditorUtility.SetDirty(feature); }
+                }
+                if (!found) Debug.LogWarning("OpenXR feature " + name + " was not found for Android; enable it in Project Settings > XR Plug-in Management > OpenXR.");
+            }
+            EditorUtility.SetDirty(openXR);
+        }
+
+        static bool QuestFeaturesEnabled(out string missing)
+        {
+            missing = "";
+            var openXR = OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
+            if (openXR == null) { missing = "OpenXR settings for Android"; return false; }
+            foreach (string name in QuestFeatures)
+            {
+                bool on = false;
+                foreach (var feature in openXR.GetFeatures()) if (feature != null && feature.GetType().Name == name && feature.enabled) on = true;
+                if (!on) missing += (missing.Length > 0 ? ", " : "") + name;
+            }
+            return missing.Length == 0;
         }
 
         static void ConfigureQuestPlayer()
@@ -96,7 +146,7 @@ namespace Droply.Editor
                 AssetDatabase.CreateAsset(pipeline, pipelinePath);
             }
             pipeline.supportsHDR = false;
-            pipeline.msaaSampleCount = 2;
+            pipeline.msaaSampleCount = 4; // sharp low-poly edges on a tile-based GPU: 4x is the usual choice on Quest
             pipeline.renderScale = 1f;
             pipeline.mainLightShadowmapResolution = 1024;
             pipeline.shadowDistance = 60f;
@@ -108,7 +158,7 @@ namespace Droply.Editor
             serializedPipeline.FindProperty("m_AdditionalLightsRenderingMode").intValue = (int)LightRenderingMode.Disabled;
             serializedPipeline.ApplyModifiedPropertiesWithoutUndo();
             QualitySettings.shadowDistance = 60f;
-            QualitySettings.antiAliasing = 2;
+            QualitySettings.antiAliasing = 4;
             GraphicsSettings.defaultRenderPipeline = pipeline;
             QualitySettings.renderPipeline = pipeline;
             EditorUtility.SetDirty(pipeline);
@@ -121,28 +171,35 @@ namespace Droply.Editor
             var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
             var generators = Object.FindObjectsByType<LandscapeGenerator>();
             if (generators.Length != 1) throw new BuildFailedException("Expected exactly one landscape generator, found " + generators.Length);
-            if (LandscapeGenerator.TreeGroupCount < 4 || LandscapeGenerator.TreeGroupCount > 7 ||
-                LandscapeGenerator.FlowerIslandCount < 4 || LandscapeGenerator.FlowerIslandCount > 8 ||
-                LandscapeGenerator.ForegroundRockCount < 3 || LandscapeGenerator.ForegroundRockCount > 6 ||
-                LandscapeGenerator.PathDirectionChanges() < 3)
-                throw new BuildFailedException("Composition counts are outside the landscape constraints.");
+            // The composition rules (open foreground, clear path, one grouped tree group, no tree rows, open sight corridors, relief, calm palette, budget)
+            // are measured on the same data the player builds. The same checks run outside Unity: dotnet run --project Tools/CompositionCheck
+            SceneData composition = LandscapeBuilder.Build();
+            var violations = LandscapeChecks.Run(composition);
+            if (violations.Count > 0) throw new BuildFailedException("Composition checks failed:\n - " + string.Join("\n - ", violations));
             if (!scene.IsValid() || scene.GetRootGameObjects().Length != 2) throw new BuildFailedException("Scene must contain only its landscape and tracked-viewpoint roots.");
             if (Camera.main == null) throw new BuildFailedException("Starting viewpoint camera is missing.");
+            if (generators[0].vertexColorShader == null || !generators[0].vertexColorShader.isSupported)
+                throw new BuildFailedException("The vertex colour shader is missing or not supported: run \"Droply > Generate and configure landscape\" (or assign " + BakedShaderPath + " to the generator).");
             var poses = Object.FindObjectsByType<HeadsetPose>();
             if (poses.Length != 1) throw new BuildFailedException("The main viewpoint must use headset tracking.");
             if (Object.FindObjectsByType<ComfortableLocomotion>().Length != 1) throw new BuildFailedException("The tracked rig must have exactly one locomotion controller.");
             if (poses[0].transform.localPosition != Vector3.zero) throw new BuildFailedException("The tracked camera rig must not impose a headset height.");
+            if (poses[0].transform.parent == null || poses[0].transform.parent.GetComponent<ViewerLocomotion>() == null)
+                throw new BuildFailedException("The tracked camera must sit inside a tracking space with ViewerLocomotion (walking and snap turns): run \"Droply > Generate and configure landscape\".");
+            string missingFeatures;
+            if (!QuestFeaturesEnabled(out missingFeatures))
+                Debug.LogWarning("Not enabled for Android: " + missingFeatures + ". Without the controller profiles the thumbsticks do nothing; without Meta Quest Support the app does not run as a Quest app.");
             string[] forbidden = { "House", "Building", "Architecture", "Furniture", "Device", "Sign", "Text", "Logo", "Canvas" };
             foreach (var root in scene.GetRootGameObjects())
                 foreach (string term in forbidden)
                     if (root.name.IndexOf(term, System.StringComparison.OrdinalIgnoreCase) >= 0)
                         throw new BuildFailedException("Prohibited world content detected: " + root.name);
             ValidateGeneratedLandscape(generators[0], forbidden);
-            Debug.Log("Landscape validation passed: tree group=" + LandscapeGenerator.TreeGroupCount +
-                ", flower islands=" + LandscapeGenerator.FlowerIslandCount +
-                ", foreground stones=" + LandscapeGenerator.ForegroundRockCount +
-                ", path direction changes=" + LandscapeGenerator.PathDirectionChanges() +
-                ", tracked main camera with no forced height.");
+            int heroTrees = 0;
+            foreach (var tree in composition.Trees) if (tree.Tier == TreeTier.Hero && tree.Kind != TreeKind.Shrub) heroTrees++;
+            Debug.Log("Landscape validation passed: " + composition.TriangleCount + " triangles in " + composition.Layers.Count + " layers, tree group=" + heroTrees +
+                ", flower islands=" + composition.IslandCenters.Count + ", stones=" + composition.Rocks.Count +
+                ", tracked main camera with no forced height, walk area " + LandscapeChecks.MeasureWalk(composition).AreaSquareMetres.ToString("0") + " m2.");
         }
 
         [MenuItem("Droply/Capture start-view review images")]
@@ -219,6 +276,9 @@ namespace Droply.Editor
             var previousSun = RenderSettings.sun;
             var previousAmbientMode = RenderSettings.ambientMode;
             var previousAmbientLight = RenderSettings.ambientLight;
+            var previousAmbientSky = RenderSettings.ambientSkyColor;
+            var previousAmbientEquator = RenderSettings.ambientEquatorColor;
+            var previousAmbientGround = RenderSettings.ambientGroundColor;
             var previousFog = RenderSettings.fog;
             Transform generated = null;
             try
@@ -226,16 +286,12 @@ namespace Droply.Editor
                 generator.GenerateLandscape();
                 generated = generator.transform.Find("Generated Landscape");
                 if (generated == null) throw new BuildFailedException("Landscape generation did not create its content root.");
-                if (generated.Find("Rolling meadow") == null || generated.Find("Curving sandy path") == null)
+                if (generated.Find("Ground") == null || generated.Find("Sand path") == null)
                     throw new BuildFailedException("The generated terrain or leading path mesh is missing.");
-                var instances = generated.GetComponent<InstancedLandscape>();
-                if (instances == null || instances.BatchCount < 5 || instances.InstanceCount < 500)
-                    throw new BuildFailedException("The generated vegetation/flower instance batches are unexpectedly sparse.");
-                if (!instances.AllMaterialsSupportInstancing ||
-                    instances.EstimatedTriangleCount > LandscapeGenerator.EstimatedTriangleBudget ||
-                    instances.EstimatedDrawCalls > LandscapeGenerator.EstimatedDrawCallBudget ||
-                    instances.NearLodInstanceCount == 0 || instances.FarLodInstanceCount == 0)
-                    throw new BuildFailedException("Generated scene exceeds its estimated Quest render budget or lacks working instancing/LODs.");
+                if (generated.Find("Sky") == null || generated.Find("Sun") == null)
+                    throw new BuildFailedException("The sky dome or the sun disc is missing.");
+                if (generated.childCount < 20)
+                    throw new BuildFailedException("The generated landscape has only " + generated.childCount + " mesh layers; expected terrain, path, trees, meadow details and distance layers.");
                 foreach (var child in generated.GetComponentsInChildren<Transform>(true))
                     foreach (string term in forbidden)
                         if (child.name.IndexOf(term, System.StringComparison.OrdinalIgnoreCase) >= 0)
@@ -248,6 +304,9 @@ namespace Droply.Editor
                 RenderSettings.sun = previousSun;
                 RenderSettings.ambientMode = previousAmbientMode;
                 RenderSettings.ambientLight = previousAmbientLight;
+                RenderSettings.ambientSkyColor = previousAmbientSky;
+                RenderSettings.ambientEquatorColor = previousAmbientEquator;
+                RenderSettings.ambientGroundColor = previousAmbientGround;
                 RenderSettings.fog = previousFog;
             }
         }
