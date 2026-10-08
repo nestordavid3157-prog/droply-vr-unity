@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Droply landscape preview</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; font-family: system-ui, sans-serif; }
+  canvas { display: block; cursor: grab; }
+  #hint { position: fixed; left: 12px; bottom: 10px; color: #fff; font-size: 13px; text-shadow: 0 1px 3px #000; pointer-events: none; }
+</style>
+<script type="importmap">{ "imports": { "three": "./node_modules/three/build/three.module.js" } }</script>
+</head>
+<body>
+<div id="hint">Preview of Assets/Droply/Scripts/Layout: the baked vertex colours drawn unlit, like the headset does. Drag = look, W A S D = walk, 1 = forward, 2 = left, 3 = right, 4 = behind, [ ] = eye height (plan view: ?view=top)</div>
+<script type="module">
+// Shows the scene exported by `dotnet run --project Tools/CompositionCheck -- export Tools/Preview/scene.json` from the viewer's eye height.
+// The player's baked pipeline has no lights: every vertex carries its final colour (sun, soft shadows, ambient occlusion, haze are baked in), so this page
+// only draws those colours. Differences to the headset: no anti-aliasing setting of the headset, display gamma of this browser.
+// Query parameters (also used for screenshots): view=top, yaw, pitch, eye (above the ground), fov, px/pz (position), tx/ty/tz (look at), w/h (size), half/cz (plan view).
+import * as THREE from 'three';
+
+const q = new URLSearchParams(location.search);
+const still = q.has('view') || q.has('yaw') || q.has('tx') || q.has('w');
+const W = still ? parseInt(q.get('w') || '1600') : innerWidth, H = still ? parseInt(q.get('h') || '900') : innerHeight;
+if (still) document.getElementById('hint').remove();
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const bytes = (b64) => { const s = atob(b64), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
+const data = await (await fetch(q.get('scene') || 'scene.json')).json();
+scene.background = new THREE.Color().setRGB(data.horizon[0] / 255, data.horizon[1] / 255, data.horizon[2] / 255, THREE.SRGBColorSpace);
+const plan = q.get('view') === 'top';
+
+let groundMesh = null;
+// Unity is left-handed: mirror x and swap two indices per triangle so the image matches the player. Colours are sRGB bytes; the player's shader decodes them with pow(c, 2.2).
+for (const layer of data.layers) {
+  if (plan && (/TreeLine|Hill|Cloud/.test(layer.material) || layer.sky)) continue;
+  const geometry = new THREE.BufferGeometry();
+  const p = new Float32Array(bytes(layer.positions).buffer), idx = new Uint32Array(bytes(layer.indices).buffer), rgba = bytes(layer.colors);
+  const color = new Float32Array(p.length);
+  for (let i = 0, n = p.length / 3; i < n; i++) for (let k = 0; k < 3; k++) color[i * 3 + k] = Math.pow(rgba[i * 4 + k] / 255, 2.2);
+  for (let i = 0; i < p.length; i += 3) p[i] = -p[i];
+  for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
+  geometry.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(color, 3));
+  geometry.setIndex(new THREE.BufferAttribute(idx, 1));
+  const material = new THREE.MeshBasicMaterial({ vertexColors: true, side: layer.double ? THREE.DoubleSide : THREE.FrontSide, depthWrite: !layer.sky });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  if (layer.name === 'Ground') groundMesh = mesh;
+  if (layer.sky) mesh.renderOrder = layer.material === 'Sky' ? -2 : -1;
+  scene.add(mesh);
+}
+
+const state = { yaw: parseFloat(q.get('yaw') || '0'), pitch: parseFloat(q.get('pitch') || '0'), eye: parseFloat(q.get('eye') || '1.65'), px: parseFloat(q.get('px') || '0'), pz: parseFloat(q.get('pz') || '0') };
+const down = new THREE.Raycaster();
+function groundAt(x, z) { // height of the rendered ground under the Unity point (x, z)
+  if (!groundMesh) return 0;
+  down.set(new THREE.Vector3(-x, 500, z), new THREE.Vector3(0, -1, 0));
+  const hit = down.intersectObject(groundMesh, false)[0];
+  return hit ? hit.point.y : 0;
+}
+let camera;
+function aim() {
+  if (plan) {
+    const half = parseFloat(q.get('half') || '150'), cz = parseFloat(q.get('cz') || '60');
+    camera = new THREE.OrthographicCamera(-half * W / H, half * W / H, half, -half, 1, 2000);
+    camera.position.set(0, 800, cz); camera.up.set(0, 0, 1); camera.lookAt(0, 0, cz);
+    return;
+  }
+  camera = new THREE.PerspectiveCamera(parseFloat(q.get('fov') || '70'), W / H, 0.1, 1500);
+  const px = state.px, pz = state.pz, eye = groundAt(px, pz) + state.eye;
+  camera.position.set(-px, eye, pz);
+  if (q.has('tx')) { camera.lookAt(-parseFloat(q.get('tx')), parseFloat(q.get('ty') || '3'), parseFloat(q.get('tz'))); return; }
+  const y = state.yaw * Math.PI / 180, p = state.pitch * Math.PI / 180;
+  camera.lookAt(-px - Math.sin(y) * Math.cos(p) * 10, eye + Math.sin(p) * 10, pz + Math.cos(y) * Math.cos(p) * 10);
+}
+if (plan) { // plan view: tree tiers as coloured discs, the path as white dots (a map for the composition, not a render of the player)
+  const disc = (x, z, r, c) => { const m = new THREE.Mesh(new THREE.CircleGeometry(r, 20), new THREE.MeshBasicMaterial({ color: c })); m.rotation.x = -Math.PI / 2; m.position.set(-x, 700, z); scene.add(m); };
+  for (const t of data.trees) disc(t[0], t[1], Math.max(0.6, t[2]), { Hero: 0xff2020, Edge: 0xff9020, Mid: 0xa040ff, Far: 0x4040ff }[t[3]]);
+  disc(0, 0, 1.2, 0x000000);
+  for (const [x, z] of data.path) disc(x, z, 0.5, 0xffffff);
+  if (data.walk) { // the walk area: its outline in black, the discs kept clear around trunks, bushes and stones in grey
+    const line = data.walk.map(([x, z]) => new THREE.Vector3(-x, 710, z));
+    scene.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(line), new THREE.LineBasicMaterial({ color: 0x000000 })));
+    for (const [x, z, r] of data.obstacles) { const m = new THREE.Mesh(new THREE.RingGeometry(r - 0.15, r, 24), new THREE.MeshBasicMaterial({ color: 0x404040 })); m.rotation.x = -Math.PI / 2; m.position.set(-x, 705, z); scene.add(m); }
+  }
+}
+function draw() { aim(); renderer.render(scene, camera); }
+draw();
+
+if (!still) {
+  let drag = null;
+  renderer.domElement.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; renderer.domElement.setPointerCapture(e.pointerId); });
+  renderer.domElement.addEventListener('pointerup', () => { drag = null; });
+  renderer.domElement.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    state.yaw -= (e.clientX - drag.x) * 0.2; state.pitch = Math.max(-80, Math.min(80, state.pitch + (e.clientY - drag.y) * 0.2));
+    drag = { x: e.clientX, y: e.clientY };
+    draw();
+  });
+  addEventListener('keydown', (e) => {
+    const views = { 1: [0, 0], 2: [-40, 0], 3: [40, 0], 4: [180, 0] };
+    if (views[e.key]) [state.yaw, state.pitch] = views[e.key];
+    const step = { w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0] }[e.key];
+    if (step) { // walk half a metre in the direction you look (no walk-area limit here; the app has one)
+      const y = state.yaw * Math.PI / 180;
+      state.px += (Math.cos(y) * step[0] + Math.sin(y) * step[1]) * 0.5;
+      state.pz += (-Math.sin(y) * step[0] + Math.cos(y) * step[1]) * 0.5;
+    }
+    if (e.key === '[') state.eye = Math.max(0.3, state.eye - 0.1);
+    if (e.key === ']') state.eye = Math.min(2.2, state.eye + 0.1);
+    draw();
+  });
+  addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); draw(); });
+}
+window.__ready = true;
+</script>
+</body>
+</html>

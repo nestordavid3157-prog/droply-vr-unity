@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Dev tool, not part of the Unity project (Unity only compiles Assets/ and Packages/).
+       Compiles the pure landscape layer (Assets/Droply/Scripts/Layout) with small stand-ins for the UnityEngine value types (UnityStubs.cs),
+       runs the composition checks and can export the scene for the preview page. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>Droply.CompositionCheck</RootNamespace>
+    <NoWarn>NU1701</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="UnityStubs.cs" />
+    <Compile Include="SelfTest.cs" />
+    <Compile Include="../../Assets/Droply/Scripts/Layout/*.cs" />
+  </ItemGroup>
+
+</Project>
