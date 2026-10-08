@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using Droply.Landscape;
 using UnityEditor;
@@ -181,6 +182,7 @@ namespace Droply.Editor
                 throw new BuildFailedException("The vertex colour shader is missing or not supported: run \"Droply > Generate and configure landscape\" (or assign " + BakedShaderPath + " to the generator).");
             var poses = Object.FindObjectsByType<HeadsetPose>();
             if (poses.Length != 1) throw new BuildFailedException("The main viewpoint must use headset tracking.");
+            if (Object.FindObjectsByType<ComfortableLocomotion>().Length != 1) throw new BuildFailedException("The tracked rig must have exactly one locomotion controller.");
             if (poses[0].transform.localPosition != Vector3.zero) throw new BuildFailedException("The tracked camera rig must not impose a headset height.");
             if (poses[0].transform.parent == null || poses[0].transform.parent.GetComponent<ViewerLocomotion>() == null)
                 throw new BuildFailedException("The tracked camera must sit inside a tracking space with ViewerLocomotion (walking and snap turns): run \"Droply > Generate and configure landscape\".");
@@ -200,6 +202,74 @@ namespace Droply.Editor
                 ", tracked main camera with no forced height, walk area " + LandscapeChecks.MeasureWalk(composition).AreaSquareMetres.ToString("0") + " m2.");
         }
 
+        [MenuItem("Droply/Capture start-view review images")]
+        public static void CaptureReviewImages()
+        {
+            EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+            var camera = Camera.main;
+            var generator = Object.FindAnyObjectByType<LandscapeGenerator>();
+            if (camera == null || generator == null) throw new BuildFailedException("Open the generated meadow scene before capturing review images.");
+
+            var previousPosition = camera.transform.position;
+            var previousRotation = camera.transform.rotation;
+            var previousTarget = camera.targetTexture;
+            var previousActive = RenderTexture.active;
+            var previousSkybox = RenderSettings.skybox;
+            var previousSun = RenderSettings.sun;
+            var previousAmbientMode = RenderSettings.ambientMode;
+            var previousAmbientLight = RenderSettings.ambientLight;
+            var previousFog = RenderSettings.fog;
+            var renderTexture = new RenderTexture(1280, 720, 24, RenderTextureFormat.ARGB32);
+            var image = new Texture2D(1280, 720, TextureFormat.RGB24, false);
+            Transform generated = null;
+            string output = Environment.GetEnvironmentVariable("DROPLY_REVIEW_OUTPUT");
+            if (string.IsNullOrWhiteSpace(output)) output = Path.Combine(Path.GetTempPath(), "droply-landscape-review");
+            Directory.CreateDirectory(output);
+            try
+            {
+                generator.GenerateLandscape();
+                generated = generator.transform.Find("Generated Landscape");
+                if (generated == null) throw new BuildFailedException("Landscape generation did not create its content root.");
+                generated.GetComponent<InstancedLandscape>().SendMessage("LateUpdate");
+                camera.stereoTargetEye = StereoTargetEyeMask.None;
+                camera.fieldOfView = 68;
+                camera.transform.position = new Vector3(0, 1.65f, -5);
+                camera.transform.LookAt(new Vector3(0, 1, 44));
+                camera.targetTexture = renderTexture;
+                camera.Render();
+                RenderTexture.active = renderTexture;
+                image.ReadPixels(new Rect(0, 0, 1280, 720), 0, 0);
+                image.Apply();
+                File.WriteAllBytes(Path.Combine(output, "landscape-color.png"), image.EncodeToPNG());
+
+                var pixels = image.GetPixels32();
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    byte gray = (byte)Mathf.Clamp(Mathf.RoundToInt(.2126f * pixels[i].r + .7152f * pixels[i].g + .0722f * pixels[i].b), 0, 255);
+                    pixels[i] = new Color32(gray, gray, gray, 255);
+                }
+                image.SetPixels32(pixels);
+                image.Apply();
+                File.WriteAllBytes(Path.Combine(output, "landscape-grayscale.png"), image.EncodeToPNG());
+                Debug.Log("Start-view review images written to " + output);
+            }
+            finally
+            {
+                camera.targetTexture = previousTarget;
+                camera.transform.SetPositionAndRotation(previousPosition, previousRotation);
+                RenderTexture.active = previousActive;
+                if (generated != null) Object.DestroyImmediate(generated.gameObject);
+                RenderSettings.skybox = previousSkybox;
+                RenderSettings.sun = previousSun;
+                RenderSettings.ambientMode = previousAmbientMode;
+                RenderSettings.ambientLight = previousAmbientLight;
+                RenderSettings.fog = previousFog;
+                Object.DestroyImmediate(image);
+                renderTexture.Release();
+                Object.DestroyImmediate(renderTexture);
+            }
+        }
+
         static void ValidateGeneratedLandscape(LandscapeGenerator generator, string[] forbidden)
         {
             var previousSkybox = RenderSettings.skybox;
@@ -213,7 +283,7 @@ namespace Droply.Editor
             Transform generated = null;
             try
             {
-                generator.SendMessage("Awake");
+                generator.GenerateLandscape();
                 generated = generator.transform.Find("Generated Landscape");
                 if (generated == null) throw new BuildFailedException("Landscape generation did not create its content root.");
                 if (generated.Find("Ground") == null || generated.Find("Sand path") == null)

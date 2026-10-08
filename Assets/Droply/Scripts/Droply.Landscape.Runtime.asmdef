@@ -1,0 +1,14 @@
+{
+  "name": "Droply.Landscape.Runtime",
+  "rootNamespace": "Droply.Landscape",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

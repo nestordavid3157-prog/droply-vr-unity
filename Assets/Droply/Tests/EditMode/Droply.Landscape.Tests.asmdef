@@ -1,0 +1,22 @@
+{
+  "name": "Droply.Landscape.Tests",
+  "rootNamespace": "Droply.Landscape.Tests",
+  "references": [
+    "Droply.Landscape.Runtime",
+    "Droply.Landscape.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "noEngineReferences": false
+}
