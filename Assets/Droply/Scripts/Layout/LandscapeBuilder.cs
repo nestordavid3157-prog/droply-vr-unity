@@ -52,7 +52,10 @@ namespace Droply.Landscape
         public const float OutermostHills = 288f;
         const float Deg = Mathf.PI / 180f;
 
-        public static SceneData Build()
+        public static SceneData Build() { return Build(true); }
+
+        /// <param name="parallelBake">Bake the light on all processor cores (the normal case); false bakes on one thread, for the self test that compares both.</param>
+        public static SceneData Build(bool parallelBake)
         {
             var data = new SceneData { Terrain = new TerrainModel(), Path = new PathModel() };
             var root = new Rng(Seed);
@@ -84,7 +87,7 @@ namespace Droply.Landscape
             data.OccluderCount = layers.Occluders.Count;
             var watch = System.Diagnostics.Stopwatch.StartNew();
             var lighting = new Lighting(data.Terrain, layers.Occluders);
-            foreach (var layer in data.Layers) lighting.Bake(layer);
+            lighting.BakeAll(data.Layers, parallelBake);
             data.BakeMilliseconds = watch.ElapsedMilliseconds;
             Sky.Build(data.Layers, lighting.TowardSun);
             return data;

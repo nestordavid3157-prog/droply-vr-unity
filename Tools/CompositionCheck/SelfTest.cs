@@ -89,8 +89,13 @@ namespace Droply.CompositionCheck
             // 6. Walking: never into a trunk, never out of the area, never a jolt, snap turns one at a time.
             failed += Walking();
 
-            // 7. The finished landscape must pass all of it.
-            var real = LandscapeBuilder.Build();
+            // 7. The light bake on all cores gives exactly the colours of a bake on one thread.
+            var serial = LandscapeBuilder.Build(false);
+            var real = LandscapeBuilder.Build(true);
+            Report(ref failed, "the bake on " + Environment.ProcessorCount + " cores gives exactly the colours of a bake on one (" + serial.BakeMilliseconds + " ms -> " + real.BakeMilliseconds + " ms)",
+                SameColours(serial, real));
+
+            // 8. The finished landscape must pass all of it.
             var violations = LandscapeChecks.Run(real);
             if (violations.Count == 0) Console.WriteLine("  ok    the built landscape passes every check");
             else { failed++; Console.WriteLine("  FAIL  the built landscape has violations: " + string.Join(" | ", violations)); }
@@ -198,6 +203,23 @@ namespace Droply.CompositionCheck
             Report(ref failed, "ten minutes of wandering in the real landscape: never outside (closest " + (-worst).ToString("0.00") + " m), at most " + worstJolt.ToString("0.0") + " m/s²",
                 worst <= 0f && worstJolt <= Walker.MaxAcceleration * 1.01f);
             return failed;
+        }
+
+        /// <summary>Same layers with the same vertices and, vertex by vertex, the same baked colour.</summary>
+        static bool SameColours(SceneData a, SceneData b)
+        {
+            if (a.Layers.Count != b.Layers.Count) return false;
+            for (int l = 0; l < a.Layers.Count; l++)
+            {
+                MeshData x = a.Layers[l].Mesh, y = b.Layers[l].Mesh;
+                if (x.Vertices.Length != y.Vertices.Length || x.Colors == null || y.Colors == null || x.Colors.Length != y.Colors.Length) return false;
+                for (int i = 0; i < x.Colors.Length; i++)
+                {
+                    Color32 p = x.Colors[i], q = y.Colors[i];
+                    if (p.r != q.r || p.g != q.g || p.b != q.b || p.a != q.a || x.Vertices[i].x != y.Vertices[i].x || x.Vertices[i].y != y.Vertices[i].y || x.Vertices[i].z != y.Vertices[i].z) return false;
+                }
+            }
+            return true;
         }
 
         static void Report(ref int failed, string what, bool ok)

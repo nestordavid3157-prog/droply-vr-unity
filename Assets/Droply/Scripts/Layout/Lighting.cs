@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Droply.Landscape
@@ -105,7 +107,6 @@ namespace Droply.Landscape
         readonly Vector3 towardSun, sun, sky, equator, ground, horizon;
         readonly TerrainModel terrain;
         readonly OccluderIndex index;
-        readonly int[] scratch;
 
         public Lighting(TerrainModel terrain, List<Occluder> occluders)
         {
@@ -119,7 +120,6 @@ namespace Droply.Landscape
             ground = Look.Linear(Palette.AmbientGround);
             horizon = Look.Linear(Palette.HorizonColor);
             index = new OccluderIndex(occluders, towardSun);
-            scratch = new int[Mathf.Max(1, index.Count)];
         }
 
         public Vector3 TowardSun { get { return towardSun; } }
@@ -130,7 +130,7 @@ namespace Droply.Landscape
         }
 
         /// <summary>Share of the sun that reaches the point (soft edges: the shadow of a crown is wider and softer the farther it is from the crown).</summary>
-        float Sunlight(Vector3 p, int owner)
+        float Sunlight(Vector3 p, int owner, int[] scratch)
         {
             int count = index.Shadowing(p, scratch);
             float visible = 1f;
@@ -150,7 +150,7 @@ namespace Droply.Landscape
         }
 
         /// <summary>Sphere ambient occlusion from the occluders around the point; 1 = open sky, lower = enclosed.</summary>
-        float Openness(Vector3 p, Vector3 n)
+        float Openness(Vector3 p, Vector3 n, int[] scratch)
         {
             int count = index.Near(p, scratch);
             float occlusion = 0f;
@@ -216,6 +216,28 @@ namespace Droply.Landscape
         }
 
         /// <summary>
+        /// Bakes every layer. With <paramref name="parallel"/> the layers are spread over the processor cores (the bake is most of the start-up time, and the
+        /// Quest 3S has several cores): the largest layers start first, each layer is baked whole by one thread in the usual order, and the bake reads nothing
+        /// but this object and the layer itself, so the colours are exactly those of a bake on one thread (the self test compares both).
+        /// </summary>
+        public void BakeAll(IList<MeshLayer> layers, bool parallel)
+        {
+            if (!parallel)
+            {
+                foreach (var layer in layers) Bake(layer);
+                return;
+            }
+            var order = new List<MeshLayer>(layers);
+            order.Sort((a, b) => b.Mesh.TriangleCount.CompareTo(a.Mesh.TriangleCount));
+            int next = -1;
+            int workers = Mathf.Clamp(System.Environment.ProcessorCount, 1, order.Count);
+            Parallel.For(0, workers, w =>
+            {
+                for (int i = Interlocked.Increment(ref next); i < order.Count; i = Interlocked.Increment(ref next)) Bake(order[i]);
+            });
+        }
+
+        /// <summary>
         /// Fills <see cref="MeshData.Colors"/> of a layer. Flat shaded triangles are lit once at their centre (all three vertices share the light, the albedo
         /// still varies with the vertex tag); smooth meshes (ground, path) are lit per vertex. Layers that already carry colours (the sky) are left alone.
         /// </summary>
@@ -224,6 +246,7 @@ namespace Droply.Landscape
             MeshData m = layer.Mesh;
             if (m.Colors != null) return;
             m.Colors = new Color32[m.Vertices.Length];
+            var scratch = new int[Mathf.Max(1, index.Count)];   // occluder indices found near a point: one array per bake, so layers can bake at the same time
             bool atmospheric = Palette.Atmospheric(layer.Material);
             SurfaceKind kind = Palette.Kind(layer.Material);
             bool groundSurface = kind == SurfaceKind.Ground || kind == SurfaceKind.Path;
@@ -242,8 +265,8 @@ namespace Droply.Landscape
                     float sunlight = 1f, openness = 1f;
                     if (!atmospheric)
                     {
-                        if (Vector3.Dot(n, towardSun) > 0f) sunlight = Sunlight(centre + n * .05f, m.Owners[a]);
-                        openness = Openness(centre + n * .05f, n);
+                        if (Vector3.Dot(n, towardSun) > 0f) sunlight = Sunlight(centre + n * .05f, m.Owners[a], scratch);
+                        openness = Openness(centre + n * .05f, n, scratch);
                     }
                     for (int k = 0; k < 3; k++)
                     {
@@ -258,8 +281,8 @@ namespace Droply.Landscape
                         int v = k == 0 ? a : k == 1 ? b : c;
                         if (m.Colors[v].a != 0) continue;
                         Vector3 n = groundSurface ? Stylize(m.Normals[v], SlopeExaggeration) : m.Normals[v];
-                        float sunlight = Vector3.Dot(n, towardSun) > 0f ? Sunlight(m.Vertices[v] + n * .05f, m.Owners[v]) : 1f;
-                        m.Colors[v] = Shade(layer.Material, m.Vertices[v], n, m.Tags[v], m.Jitters[v], m.Owners[v], sunlight, Openness(m.Vertices[v] + n * .05f, n));
+                        float sunlight = Vector3.Dot(n, towardSun) > 0f ? Sunlight(m.Vertices[v] + n * .05f, m.Owners[v], scratch) : 1f;
+                        m.Colors[v] = Shade(layer.Material, m.Vertices[v], n, m.Tags[v], m.Jitters[v], m.Owners[v], sunlight, Openness(m.Vertices[v] + n * .05f, n, scratch));
                     }
                 }
             }

@@ -11,18 +11,20 @@ namespace Droply.CompositionCheck
     /// dotnet run --project Tools/CompositionCheck                -> build the landscape, print the numbers, run the composition checks (exit code 1 on a violation)
     /// dotnet run --project Tools/CompositionCheck -- export f.json -> additionally write the scene for Tools/Preview
     /// dotnet run --project Tools/CompositionCheck -- probe 26     -> baked ground colour along the line z = 26 (is the cast shadow where the geometry says it is?)
+    /// dotnet run --project Tools/CompositionCheck -- bench        -> build time on this machine (best of seven, after a warm-up), with the bake on all cores and on one
     /// </summary>
     static class Program
     {
         static int Main(string[] args)
         {
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest.Run();
+            if (args.Length >= 1 && args[0] == "bench") { Bench(); return 0; }
             if (args.Length >= 2 && args[0] == "probe") { Probe(LandscapeBuilder.Build(), float.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture)); return 0; }
             var watch = System.Diagnostics.Stopwatch.StartNew();
             SceneData data = LandscapeBuilder.Build();
             long ms = watch.ElapsedMilliseconds;
             bool deterministic = Checksum(data) == Checksum(LandscapeBuilder.Build());
-            Console.WriteLine("Same input, same landscape (built twice, identical geometry): " + (deterministic ? "yes" : "NO"));
+            Console.WriteLine("Same input, same landscape (built twice, identical geometry and baked colours): " + (deterministic ? "yes" : "NO"));
 
             int vertexTotal = 0;
             foreach (var layer in data.Layers) vertexTotal += layer.Mesh.Vertices.Length;
@@ -68,6 +70,23 @@ namespace Droply.CompositionCheck
             return 1;
         }
 
+        static void Bench()
+        {
+            LandscapeBuilder.Build();   // warm-up: the first build also compiles the code
+            foreach (bool parallel in new[] { true, false })
+            {
+                long bestBuild = long.MaxValue, bestBake = long.MaxValue;
+                for (int i = 0; i < 7; i++)
+                {
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    SceneData data = LandscapeBuilder.Build(parallel);
+                    bestBuild = Math.Min(bestBuild, watch.ElapsedMilliseconds);
+                    bestBake = Math.Min(bestBake, data.BakeMilliseconds);
+                }
+                Console.WriteLine((parallel ? "bake on " + Environment.ProcessorCount + " cores: " : "bake on one core: ") + "build " + bestBuild + " ms, of which light bake " + bestBake + " ms (best of 7)");
+            }
+        }
+
         /// <summary>Prints the baked ground colour (sRGB) of the ground vertices near the line z = <paramref name="z"/>, from x = -20 to 20.</summary>
         static void Probe(SceneData data, float z)
         {
@@ -82,7 +101,7 @@ namespace Droply.CompositionCheck
             foreach (var pair in rows) Console.WriteLine("  x " + pair.Key.ToString("0.00").PadLeft(6) + ": " + pair.Value.r.ToString().PadLeft(3) + " " + pair.Value.g.ToString().PadLeft(3) + " " + pair.Value.b.ToString().PadLeft(3));
         }
 
-        /// <summary>Order-sensitive checksum over every vertex and triangle index of every layer.</summary>
+        /// <summary>Order-sensitive checksum over every vertex, triangle index and baked colour of every layer.</summary>
         static double Checksum(SceneData data)
         {
             double sum = 0;
@@ -94,6 +113,12 @@ namespace Droply.CompositionCheck
                     sum += (v.x * 3.1 + v.y * 5.7 + v.z * 7.3) * ((i % 97) + 1);
                 }
                 for (int i = 0; i < layer.Mesh.Triangles.Length; i++) sum += layer.Mesh.Triangles[i] * ((i % 89) + 1) * 1e-3;
+                if (layer.Mesh.Colors == null) continue;
+                for (int i = 0; i < layer.Mesh.Colors.Length; i++)
+                {
+                    Color32 c = layer.Mesh.Colors[i];
+                    sum += (c.r * 1.3 + c.g * 2.9 + c.b * 4.1 + c.a * .7) * ((i % 83) + 1) * 1e-2;
+                }
             }
             return sum;
         }

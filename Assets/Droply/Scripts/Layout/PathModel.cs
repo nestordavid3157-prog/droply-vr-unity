@@ -16,9 +16,13 @@ namespace Droply.Landscape
         };
 
         const int SubSteps = 36;
+        /// <summary>Segments per stretch: <see cref="Distance(float, float, out float)"/> skips whole stretches whose bounding box is farther than the best match so far.</summary>
+        const int Stretch = 12;
 
         readonly Vector3[] points;
         readonly float[] arc;
+        /// <summary>Bounding box (min x, min z, max x, max z) of each stretch of segments.</summary>
+        readonly float[] stretchBox;
 
         public float Length { get; private set; }
 
@@ -40,6 +44,18 @@ namespace Droply.Landscape
             points[points.Length - 1] = new Vector3(Control[Control.Length - 1].x, 0f, Control[Control.Length - 1].y);
             for (int i = 1; i < points.Length; i++) arc[i] = arc[i - 1] + (points[i] - points[i - 1]).magnitude;
             Length = arc[arc.Length - 1];
+            int segmentCount = points.Length - 1, stretches = (segmentCount + Stretch - 1) / Stretch;
+            stretchBox = new float[stretches * 4];
+            for (int c = 0; c < stretches; c++)
+            {
+                float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
+                for (int i = c * Stretch; i <= Mathf.Min((c + 1) * Stretch, segmentCount); i++)
+                {
+                    minX = Mathf.Min(minX, points[i].x); maxX = Mathf.Max(maxX, points[i].x);
+                    minZ = Mathf.Min(minZ, points[i].z); maxZ = Mathf.Max(maxZ, points[i].z);
+                }
+                stretchBox[c * 4] = minX; stretchBox[c * 4 + 1] = minZ; stretchBox[c * 4 + 2] = maxX; stretchBox[c * 4 + 3] = maxZ;
+            }
         }
 
         /// <summary>Half the width of the sand at arc length s: about 2.4 m wide near the viewer, about 1.9 m far away.</summary>
@@ -74,15 +90,25 @@ namespace Droply.Landscape
         /// <summary>Distance from (x, z) to the centre line; <paramref name="s"/> is the arc length of the nearest point.</summary>
         public float Distance(float x, float z, out float s)
         {
+            // The nearest of all segments, in order. A stretch whose box is clearly farther than the best so far cannot hold a nearer segment and is skipped,
+            // which changes nothing in the result (the composition check compares the whole landscape) but saves most of the work: the build asks this tens of thousands of times.
             float best = float.MaxValue, bestS = 0f;
-            for (int i = 0; i < points.Length - 1; i++)
+            int segmentCount = points.Length - 1;
+            for (int c = 0; c * Stretch < segmentCount; c++)
             {
-                float ax = points[i].x, az = points[i].z, bx = points[i + 1].x - ax, bz = points[i + 1].z - az;
-                float len2 = bx * bx + bz * bz;
-                float t = len2 > 1e-9f ? Mathf.Clamp01(((x - ax) * bx + (z - az) * bz) / len2) : 0f;
-                float dx = x - (ax + bx * t), dz = z - (az + bz * t);
-                float d2 = dx * dx + dz * dz;
-                if (d2 < best) { best = d2; bestS = arc[i] + (arc[i + 1] - arc[i]) * t; }
+                float gx = Mathf.Max(0f, Mathf.Max(stretchBox[c * 4] - x, x - stretchBox[c * 4 + 2]));
+                float gz = Mathf.Max(0f, Mathf.Max(stretchBox[c * 4 + 1] - z, z - stretchBox[c * 4 + 3]));
+                if (gx * gx + gz * gz > best * 1.001f + 1e-4f) continue;
+                int end = Mathf.Min((c + 1) * Stretch, segmentCount);
+                for (int i = c * Stretch; i < end; i++)
+                {
+                    float ax = points[i].x, az = points[i].z, bx = points[i + 1].x - ax, bz = points[i + 1].z - az;
+                    float len2 = bx * bx + bz * bz;
+                    float t = len2 > 1e-9f ? Mathf.Clamp01(((x - ax) * bx + (z - az) * bz) / len2) : 0f;
+                    float dx = x - (ax + bx * t), dz = z - (az + bz * t);
+                    float d2 = dx * dx + dz * dz;
+                    if (d2 < best) { best = d2; bestS = arc[i] + (arc[i + 1] - arc[i]) * t; }
+                }
             }
             s = bestS;
             return Mathf.Sqrt(best);

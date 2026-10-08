@@ -1,8 +1,8 @@
-# Reparatur, Grafik und Gehen in der Landschaft (2026-10-07)
+# Reparatur, Grafik, Gehen und Leistung in der Landschaft (2026-10-07/08)
 
-Auftrag: der „Reparaturprompt“ des Betreibers, danach „die Grafik muss auf der App verbessert werden“, danach „weiter machen“ (Phase 8 der Regeln: Gehen und Komfort, Abschnitt 4). Die Landschaft war ein dichter, zufällig gefüllter Low-Poly-Wald; sie soll eine bewusst komponierte, ruhige, offene Naturwelt für die Quest 3S sein, die dem Konzeptbild (`konzept-landschaft.png`) in Stimmung, Staffelung und Farbe folgt. **Reparatur durch Reduktion und Neuplatzierung, danach Licht, Farbe und Detail, nicht durch mehr Objekte.** Was bleibt: Projekt, URP-/OpenXR-Setup, Menübefehle, Szene, Ablauf „Generate → Validate“.
+Auftrag: der „Reparaturprompt“ des Betreibers, danach „die Grafik muss auf der App verbessert werden“, danach „weiter machen“ (Phase 8 der Regeln: Gehen und Komfort, Abschnitt 4), danach noch einmal „weiter machen“ (Phase 9: LOD, Instancing, Leistung, Abschnitt 5). Die Landschaft war ein dichter, zufällig gefüllter Low-Poly-Wald; sie soll eine bewusst komponierte, ruhige, offene Naturwelt für die Quest 3S sein, die dem Konzeptbild (`konzept-landschaft.png`) in Stimmung, Staffelung und Farbe folgt. **Reparatur durch Reduktion und Neuplatzierung, danach Licht, Farbe und Detail, nicht durch mehr Objekte.** Was bleibt: Projekt, URP-/OpenXR-Setup, Menübefehle, Szene, Ablauf „Generate → Validate“.
 
-**Nichts davon wurde in Unity oder an einer Quest geprüft** (siehe Abschnitt 7). Geprüft wurde mit einem Werkzeug außerhalb von Unity: derselbe C#-Code baut die Szene und bäckt das Licht, Checks messen die Regeln, eine Vorschau zeigt genau die gebackenen Vertexfarben aus Augenhöhe.
+**Nichts davon wurde in Unity oder an einer Quest geprüft** (siehe Abschnitt 8). Geprüft wurde mit einem Werkzeug außerhalb von Unity: derselbe C#-Code baut die Szene und bäckt das Licht, Checks messen die Regeln, eine Vorschau zeigt genau die gebackenen Vertexfarben aus Augenhöhe.
 
 ## 1. Analyse der alten Szene (aus dem Code gerechnet, nicht gemessen)
 
@@ -57,7 +57,7 @@ Auf der Quest kosten echtes Licht und Schattenkarten GPU-Zeit, und das Sonnenlic
 - **Blumeninseln:** je ein grüner Hügel aus flachen Blattlappen mit Blatt-Büscheln am Rand, darüber 18–26 größere Blüten in drei Formen (Margerite, Hahnenfuß, **Lavendel-Ähre**), eine Hauptfarbe und bei den meisten eine zweite für ein Viertel der Blüten. Eine Insel liegt jetzt 14 m vor dem Betrachter. 164 Blüten auf 7 Inseln.
 - **Ferne:** Hügel höher und **blau** statt graugrün, Waldlinie mit runderen Kronen (Segmente 1 m, kleine Unebenheit, wandernde Helligkeit), sieben statt fünf Wolken.
 
-### 3.4 Messwerte nach der zweiten Runde (Rechner, nicht Quest; aktuelle Werte in 4.4)
+### 3.4 Messwerte nach der zweiten Runde (Rechner, nicht Quest; aktuelle Werte in 4.4 und 5.2)
 
 | Größe | Wert |
 |---|---|
@@ -120,13 +120,66 @@ Gehen ist reiner C#-Code und läuft im Prüfwerkzeug mit 72 Bildern/s: geradeaus
 |---|---|
 | Dreiecke / Vertices / Schichten (= Zeichenaufrufe) | 75.859 / 158.908 (≈ 2,4 MiB) / 41 |
 | Bäume je Stufe (Dreiecke je Baum) | Gruppe 5 (1.680), Waldkante 26 (292, drei davon voll detailliert), vereinfacht 58 (53) |
-| Licht einbacken / ganzes Bauen | ≈ 0,48 s / ≈ 0,74 s auf dem heutigen Rechner (der alte Stand braucht dort ≈ 0,43 s / ≈ 0,65 s), **auf der Quest unbekannt** |
+| Licht einbacken / ganzes Bauen | ≈ 0,48 s / ≈ 0,74 s auf dem heutigen Rechner (der alte Stand braucht dort ≈ 0,43 s / ≈ 0,65 s), **auf der Quest unbekannt**; seit Phase 9 schneller (5.2) |
 
 ### 4.5 Quest-Einstellungen, die gefehlt haben
 
 In `Assets/XR/Settings/OpenXR Package Settings.asset` waren für Android **„Meta Quest Support“ und alle Controller-Profile ausgeschaltet**. Ohne Meta Quest Support startet die Android-App auf der Quest vermutlich nicht als VR-App, ohne Controller-Profil melden die Sticks nichts. Jetzt eingeschaltet: Meta Quest Support, Oculus Touch Controller Profile, Meta Quest Touch Plus Controller Profile (die Controller der Quest 3S); von Hand in der Datei und im Menübefehl `Droply → Generate and configure landscape`, die Validierung warnt, wenn eines fehlt.
 
-## 5. Abschlusskontrolle (die 20 Punkte des Prompts)
+## 5. Vierte Runde: Leistung, LOD und Instancing (Phase 9)
+
+Regel 30: erst das Problem bestimmen, dann die kleinste sinnvolle Änderung. Deshalb zuerst gemessen, was die Szene kostet, dann nur das geändert, was messbar etwas bringt; der Rest ist hier mit Begründung festgehalten.
+
+### 5.1 Befund
+
+| Was | Wert (Rechner) | Einordnung |
+|---|---|---|
+| Dreiecke / Vertices pro Bild | 75.859 / 158.908 (≈ 2,4 MiB, Position + Farbe) | Metas Leitfaden nennt für die schwächere Quest 2 als Richtwert grob 750.000–1.000.000 Dreiecke und einige hundert Zeichenaufrufe pro Bild (aus dem Gedächtnis, nicht nachgeschlagen) |
+| Zeichenaufrufe / Materialien / Shader | 41 / 4 / einer, ohne Licht- und Texturarbeit | keine Lichter, keine Schattenkarten, keine Skybox, keine Nachbearbeitung, MSAA 4 |
+| Arbeit pro Bild auf der CPU | Gehen, Himmel folgt dem Auge | keine Speicheranforderung pro Bild (keine GC-Pausen), inkrementeller GC eingeschaltet |
+| **Start** | ganzes Bauen ≈ 0,57 s, davon Licht ≈ 0,43 s (warm, bestes von 7, Rechner mit 4 Kernen) | die einzige bekannte Unbekannte: die Brille rechnet alles beim Start, vermutlich mehrfach langsamer |
+
+Die laufende Last ist klein; was zählt, ist der Start (so lange zeigt die Brille noch keine Landschaft).
+
+### 5.2 Geändert: der Start ist mehr als doppelt so schnell
+
+- **Licht auf allen Kernen** (`Lighting.BakeAll`): die Schichten werden gleichzeitig gebacken, die größten zuerst; jede Schicht bäckt ein Thread ganz und in der bisherigen Reihenfolge, gelesen wird nur Unveränderliches. Deshalb sind die Farben **bitgenau dieselben** wie beim Backen auf einem Kern: der `selftest` vergleicht beide, und der Export der ganzen Szene ist byteweise gleich dem Stand vor dieser Runde. (Dafür hat jede Schicht ihre eigene Liste für die Verdecker-Suche, und die Farbtabelle in `Look` wird beim ersten Benutzen der Klasse angelegt, nicht nebenbei.)
+- **Abstand zum Weg** (`PathModel.Distance`): wird beim Bauen zehntausende Male gefragt (Flecken, Gras, Blumen, Prüfungen) und ging jedes Mal alle 360 Wegstücke durch. Jetzt werden Abschnitte von 12 Stücken übersprungen, deren Rechteck sicher weiter weg ist als der beste Treffer; das Ergebnis ist dasselbe (Export gleich).
+- Neuer Aufruf `dotnet run --project Tools/CompositionCheck -- bench` misst die Bauzeit (bestes von 7 nach einem Aufwärmen). Die Prüfsumme der Szene enthält jetzt auch die Farben.
+
+| Rechner mit 4 Kernen, warm, bestes von 7 | vorher | jetzt |
+|---|---|---|
+| ganzes Bauen | 573 ms | **257 ms** |
+| davon Licht | 429 ms | **110 ms** (auf einem Kern 418 ms) |
+| davon Komposition | ≈ 144 ms | ≈ 85 ms |
+
+Auf der Quest fehlen die Zahlen; die Startzeile im Log (`Droply landscape: … ms`) zeigt sie. Der Unity-Teil (Meshes anlegen) kommt dazu.
+
+### 5.3 Bewusst nicht gebaut (Begründung)
+
+- **Kacheln für Frustum Culling.** Jede Schicht ist ein Mesh rund um den Betrachter, Unity kann davon nichts wegschneiden: es werden immer alle ≈ 76.000 Dreiecke gezeichnet. Aufteilen in Kacheln würde aus 41 Zeichenaufrufen weit über hundert machen, um Vertexarbeit zu sparen, die bei dieser Menge kaum zählt. Wird erst sinnvoll, wenn die Messung in der Brille zeigt, dass die GPU an der Geometrie hängt.
+- **LOD-Gruppen zur Laufzeit.** Die Detailstufen sind fest nach Abstand zum Gehbereich vergeben (Regel 23): Gruppe 1.680, Waldkante 292, vereinfacht 53 Dreiecke je Baum, dahinter Waldlinien und Hügel als Bänder. Weil der Gehbereich begrenzt ist und die Abstände geprüft werden (Waldkante ≥ 15 m, vereinfachte Gruppen ≥ 35 m, Waldlinie ≥ 80 m, 4.2), gibt es nichts umzuschalten und kein Aufploppen.
+- **Instancing.** Das Licht steckt in den Vertexfarben: jede Kopie eines Baums hat eigene Schatten und eigene Verdeckung, keine zwei Instanzen wären gleich. Verschmolzene statische Meshes sind hier günstiger (41 Zeichenaufrufe, 2,4 MiB). Regel 24 sagt „wo sinnvoll“.
+- **Himmel zuletzt zeichnen.** Die Himmelskuppel wird zuerst gezeichnet und überall übermalt, das kostet etwa eine Bildschirmfläche mit dem billigsten Shader. Zuletzt gezeichnet würde sie nur sichtbare Pixel kosten, dafür müsste der Shader die Kuppel auf die Fernebene legen. Das kann hier niemand übersetzen und testen; ein Fehler ließe den Himmel verschwinden. Erst mit Unity.
+- **Foveated Rendering** (in OpenXR 1.18 als Funktion vorhanden, aus): spart Pixelarbeit am Bildrand, die hier fast nichts kostet, und gröbere Ränder wären an den facettierten Kanten und im Himmelsverlauf sichtbar.
+- **90 statt 72 Bilder/s:** würde Gehen und Kopfdrehen glatter machen (Komfort). OpenXR 1.18 hat dafür keine eigene Einstellung (dafür bräuchte es Metas eigenes OpenXR-Paket). Kandidat, sobald die Bildrate in der Brille gemessen ist.
+
+### 5.4 Gegen die echten Paketquellen abgeglichen (statt aus dem Gedächtnis)
+
+Unity selbst läuft hier nicht, aber die Quelltexte der Pakete sind öffentlich (OpenXR 1.18.0 über den Paket-Spiegel von needle-mirror, URP 17.6.0 aus Unitys Graphics-Repository):
+
+- **OpenXR-Einrichtung** (`ProjectSetup.cs`): `OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup)`, `GetFeatures()` und `feature.enabled` gibt es so; die Klassennamen `MetaQuestFeature`, `OculusTouchControllerProfile`, `MetaQuestTouchPlusControllerProfile` stimmen.
+- **Sticks:** beide Controller-Profile melden den Stick unter „Primary2DAxis“, und OpenXR meldet die Aktionen auch dann an, wenn das neue Input System nicht aktiv ist (das Projekt steht auf dem alten Input Manager). `CommonUsages.primary2DAxis` in `ViewerLocomotion` ist damit der richtige Weg.
+- **OpenXR-Einstellungsdatei:** die eingeschalteten Funktionen gehören zu dem Android-Satz, den das Paket wirklich benutzt. Die Datei enthält noch einen zweiten, nicht verwendeten Satz; harmlos.
+- **Shader:** mit den echten URP-17.6.0-Dateien für die vier Varianten vorverarbeitet, die auf der Quest vorkommen können (ohne Stereo, Instancing, Multiview, Single-Pass-Instanced): alle Includes gefunden, die Makros ergeben den erwarteten Code (bei Multiview kommt der Augenindex aus `gl_ViewID`). Ganz übersetzt werden konnte er nicht: glslang scheitert schon an der URP-Bibliothek selbst (Überladungen mit halber Genauigkeit), Unitys eigener Compiler und DXC sind hier nicht verfügbar.
+
+### 5.5 Messen in der Brille (Phase 10)
+
+- **Start:** `adb logcat -s Unity`, Zeile `Droply landscape: …` (Bauen, Licht, Objekte in ms).
+- **Bildrate, CPU, GPU, Wärme:** Metas *OVR Metrics Tool* (Einblendung in der Brille), ohne Code. Ziel: 72 Bilder/s ohne Einbrüche, auch beim Gehen, beim Snap Turn und mit Blick in die Baumgruppe.
+- Erst wenn dort etwas fehlt, kommen die Punkte aus 5.3 wieder auf den Tisch, in dieser Reihenfolge: was die Messung als Engpass zeigt.
+
+## 6. Abschlusskontrolle (die 20 Punkte des Prompts)
 
 „gemessen“ = ein Check in `LandscapeChecks` (läuft in Unity unter *Droply → Validate landscape* und außerhalb mit `dotnet run --project Tools/CompositionCheck`). „gesehen“ = in der Vorschau (three.js, gebackene Vertexfarben) angesehen, nicht in Unity. „Brille“ = nur in der Quest beurteilbar.
 
@@ -149,11 +202,11 @@ In `Assets/XR/Settings/OpenXR Package Settings.asset` waren für Android **„Me
 | Maßstab wirkt menschlich | gemessen (1 Einheit = 1 m, Baumhöhen 4–12 m); Brille |
 | VR-Perspektive wirkt natürlich | **Brille** (Boden-Ursprung angefordert, Boden folgt dem Gelände, Gehen und Snap Turn außerhalb von Unity simuliert; nichts davon in der Brille geprüft) |
 | Keine unnötigen Mikrodetails | Dreiecke je Blume ≈ 20–35, je Fleck ≈ 6, je Kiesel 20; im Budget; die kleinen Dinge dienen dem Tiefenhinweis (3.3) |
-| Quest-3S-Performance bleibt Priorität | Budget gemessen (≤ 80.000 Dreiecke, ≤ 60 Schichten, ein trivialer Shader), **Bildrate und Bauzeit nicht gemessen** |
+| Quest-3S-Performance bleibt Priorität | Budget gemessen (≤ 80.000 Dreiecke, ≤ 60 Schichten, ein trivialer Shader), Start auf dem Rechner mehr als halbiert (5.2), **Bildrate und Bauzeit in der Brille nicht gemessen** |
 | Wirkt nicht wie ein zufälliger Generator | gemessen (keine Reihen, kein Teppich; `selftest` lehnt die alte Anordnung und Teppiche ab), gesehen |
 | Wirkt wie eine bewusst gestaltete Landschaft | **Urteil in der Brille** |
 
-## 6. Vorschau (three.js, nicht Unitys Renderer)
+## 7. Vorschau (three.js, nicht Unitys Renderer)
 
 `docs/vorschau/`: `ansicht-geradeaus.jpg`, `-links` (Sonne und Gruppe), `-rechts`, `-zurueck`, `-lageplan` (Baumstufen als Kreise: rot Gruppe, orange Waldkante, violett vereinfacht; weiße Punkte der Weg), `-baumgruppe`, `-waldkante`, `-blumeninsel`, `-weg`, dazu vom Gehen: `-gehbereich` (Umriss schwarz, ausgesparte Stämme, Büsche und Steine als graue Ringe), `-unter-der-gruppe` (zwischen den Stämmen der Gruppe), `-rueckblick` (vom Ende des Bereichs zurück zum Start). Die Vorschau zeichnet die gebackenen Vertexfarben ohne Licht und mit derselben Umrechnung wie der Shader, Unterschiede zur Brille sind Kantenglättung, Anzeige und Optik. Aufnahme 1600 × 900 aus Augenhöhe 1,65 m, vertikal 70°, mit den Adressen (`Tools/Preview`, `python3 -m http.server`):
 
@@ -169,10 +222,10 @@ rueckblick  ?px=-2&pz=63&yaw=180&pitch=2
 
 (`eye` ist die Höhe über dem Gelände an `px`/`pz`. In der Vorschau geht man mit W A S D, ohne Begrenzung; den Gehbereich hat nur die App.)
 
-## 7. Nicht geprüft / bewusst offen
+## 8. Nicht geprüft / bewusst offen
 
-- **Alles in Unity und an der Quest** (siehe `README.md`, Abschnitt „What has not been verified“). Der Spielcode kompiliert gegen die echten UnityEngine-Assemblies (2021.3-Schnittstelle, `Tools/CompileCheck`); der Shader wurde nur auf Syntax geprüft (glslang, HLSL-Frontend, URP-Makros nachgebildet), **nicht von Unity übersetzt**; `ProjectSetup.cs` braucht UnityEditor, URP und XR und wurde nur gelesen (neu darin: `OpenXRSettings.GetSettingsForBuildTargetGroup`, aus dem Gedächtnis, nicht übersetzt). Szene, Grafikeinstellungen und OpenXR-Einstellungen wurden von Hand geändert (Shader, Tracking-Raum mit `ViewerLocomotion`, Quest-Funktionen); der Menübefehl schreibt sie sauber neu.
-- Die **Bauzeit auf der Quest** ist unbekannt (Desktop ≈ 0,45 s). Wenn sie stört: das Einbacken je Schicht parallel laufen lassen (die Schichten sind unabhängig) oder die Gruppen der fernen Schichten gröber backen.
+- **Alles in Unity und an der Quest** (siehe `README.md`, Abschnitt „What has not been verified“). Der Spielcode kompiliert gegen die echten UnityEngine-Assemblies (2021.3-Schnittstelle, `Tools/CompileCheck`); der Shader wurde auf Syntax geprüft und mit den echten URP-17.6.0-Dateien vorverarbeitet (5.4), **nicht von Unity übersetzt**; `ProjectSetup.cs` braucht UnityEditor, URP und XR und wurde nur gelesen (die neuen OpenXR-Aufrufe sind gegen den Quelltext von OpenXR 1.18.0 abgeglichen, 5.4, aber nicht übersetzt). Szene, Grafikeinstellungen und OpenXR-Einstellungen wurden von Hand geändert (Shader, Tracking-Raum mit `ViewerLocomotion`, Quest-Funktionen); der Menübefehl schreibt sie sauber neu.
+- Die **Bauzeit auf der Quest** ist unbekannt (Rechner mit 4 Kernen jetzt ≈ 0,26 s, vorher ≈ 0,57 s; 5.2). Wenn sie noch stört: die fernen Schichten gröber backen oder das fertige Ergebnis im Editor als Mesh speichern (dann rechnet die Brille beim Start nichts mehr).
 - **Sonnenschein und Sonnenscheibe** (2,1°) stehen links vorn, knapp außerhalb des Blickfelds beim Blick geradeaus; Größe und Stärke sind Geschmack (`Sky.cs`). **Himmelsverlauf:** Streifenbildung (Banding) auf den 8-Bit-Displays ist möglich; ein leichtes Rauschen im Shader würde sie verdecken (nicht gebaut).
 - Die Wolken sind flach gefärbt (zweifarbig nach Flächenrichtung), keine Beleuchtung; nur die eine Wolke neben der Sonne wirft Schatten.
 - Rücken und Gruppe sind für die Blickrichtung +z komponiert; hinter dem Betrachter ist die Wiese bewusst ruhig (Hügel, Waldlinie, zwei ferne Gruppen).

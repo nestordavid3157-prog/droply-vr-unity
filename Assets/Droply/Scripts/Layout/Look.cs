@@ -42,19 +42,17 @@ namespace Droply.Landscape
         static readonly Vector3 Moss = Linear(84, 104, 60), BarkDark = Linear(52, 46, 42);
         static readonly Vector3 Warm = new Vector3(1.12f, 1.04f, .8f), Cool = new Vector3(.8f, .98f, 1.12f);
 
-        static Vector3[] baseColors;
+        /// <summary>Linear base colour of each material, computed once when the class is first used (before any bake thread reads it).</summary>
+        static readonly Vector3[] baseColors = BaseColorTable();
 
-        /// <summary>Linear base colour of a material (computed once).</summary>
-        static Vector3 BaseColor(Mat mat)
+        static Vector3[] BaseColorTable()
         {
-            if (baseColors == null)
-            {
-                var table = new Vector3[System.Enum.GetValues(typeof(Mat)).Length];
-                for (int i = 0; i < table.Length; i++) table[i] = Linear(Palette.Color((Mat)i));
-                baseColors = table;
-            }
-            return baseColors[(int)mat];
+            var table = new Vector3[System.Enum.GetValues(typeof(Mat)).Length];
+            for (int i = 0; i < table.Length; i++) table[i] = Linear(Palette.Color((Mat)i));
+            return table;
         }
+
+        static Vector3 BaseColor(Mat mat) { return baseColors[(int)mat]; }
 
         /// <summary>The meadow: large soft patches of cool shade, fresh green and sunlit green, drier warm patches, and a fine speckle. Smooth, no edges.</summary>
         public static Vector3 Ground(float x, float z)
