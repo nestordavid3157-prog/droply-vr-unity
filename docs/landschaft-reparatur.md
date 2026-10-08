@@ -231,3 +231,22 @@ rueckblick  ?px=-2&pz=63&yaw=180&pitch=2
 - Rücken und Gruppe sind für die Blickrichtung +z komponiert; hinter dem Betrachter ist die Wiese bewusst ruhig (Hügel, Waldlinie, zwei ferne Gruppen).
 - **Gehen nicht in der Brille geprüft:** ob 1,2 m/s, 0,3 s Anfahren, 30° Snap Turn und das Polster am Rand angenehm sind, ob die Sticks über die Profile wirklich ankommen (`InputDevices`, `CommonUsages.primary2DAxis`) und ob der Boden beim Gehen ruhig wirkt, kann nur jemand in der Quest beurteilen. Teleportation (in den Regeln optional) ist nicht gebaut. Am Ende des Bereichs führt der Weg weiter über den Rücken; dort hält man weich an, ohne sichtbaren Grund.
 - Bewegung (Gras im Wind, Vögel, Schwanken): nicht gebaut (Regeln: keine unnötigen Details, kein erzwungenes Bewegtbild).
+
+## 9. Nach dem Zusammenführen mit PR #1 (2026-10-08)
+
+PR #2 (dieser Stand) und danach PR #1 („Finish Quest landscape implementation“, mit Copilot auf dem alten Grundstand geschrieben) wurden nacheinander in `main` zusammengeführt. Beim Auflösen der Konflikte sind Teile beider Stände durcheinandergeraten. **`main` kompilierte danach nicht** (in Unity: keine Szene startet, kein Build):
+
+| Was | Folge | Jetzt |
+|---|---|---|
+| Reste des alten Baum-Codes (`TaperedBranch`, `Ellipsoid`, `TreeLodDistance` …) mitten in `LandscapeGenerator.CreateBaked` | 21 Übersetzungsfehler | entfernt; `GenerateLandscape()` aus PR #1 bleibt (Editor und Tests rufen es auf) |
+| Szene `Meadow.unity` aus zwei Ständen gemischt | Objekte zeigen auf Komponenten, die es nicht gibt, die Wurzelliste ins Leere | der saubere Stand aus PR #2 (Tracking-Raum mit `ViewerLocomotion`, Kamera mit `HeadsetPose`, Generator mit Shader-Verweisen) |
+| zweite Gehsteuerung `ComfortableLocomotion` neben `ViewerLocomotion` | beide hätten den Spieler bewegt (1,2 + 0,85 m/s), ohne Gehbereich und ohne Boden; ihr Teleport sucht MeshCollider, die die Landschaft nicht hat | entfernt; die Prüfung verlangt jetzt genau eine `ViewerLocomotion`. Teleport, falls gewünscht: auf dem Gehbereich gebaut (Ziel nur innerhalb), nicht gebaut |
+| EditMode-Tests und Menü „Capture start-view review images“ verweisen auf `InstancedLandscape` (gibt es seit der Reparatur nicht mehr) | Übersetzungsfehler | Tests neu geschrieben (Kompositionsprüfungen, gleiche Landschaft bei gleichem Startwert, paralleles = serielles Backen, erzeugte Objekte, Umherlaufen ohne Verlassen des Gehbereichs, Snap Turn); Menü repariert, Aufnahme vom Startpunkt |
+| `using System;` im Editor-Code | `Object` mehrdeutig (System/UnityEngine) | entfernt |
+| Assembly-Definition für den Editor-Code ohne Verweis auf OpenXR | `OpenXRSettings` unbekannt | entfernt: ohne sie sieht der Editor-Code alle Pakete von selbst. Die Assembly-Definition für den Spielcode bleibt (die Tests brauchen sie) |
+| `PathVertexColor.shader` | nirgends benutzt | entfernt |
+| `Object.FindObjectsByType<T>()` ohne Sortierung | gibt es erst in neueren Unity-Versionen | mit `FindObjectsSortMode.None`, das es seit 2021.3 gibt |
+
+Übernommen aus PR #1 und unverändert gelassen: die Projekteinstellungen, die Unity selbst neu geschrieben hat (Eingabe, Tags, Grafik, URP; Meta Quest Support und die Controller-Profile für Android sind weiter an), das Test-Paket (Version an die Sperrdatei angeglichen: 1.8.0).
+
+Geprüft (nicht in Unity): Spielcode und Tests kompilieren gegen UnityEngine 2021.3 und NUnit 3.5 (`Tools/CompileCheck`); der Editor-Code kompiliert gegen UnityEditor 2021.1 mit nachgebildeten Pakettypen bis auf `NamedBuildTarget` (gibt es ab 2021.2); Kompositionsprüfung und `selftest` bestehen. **Die Tests sind nicht gelaufen**: in Unity unter *Window → General → Test Runner → EditMode → Run All*.

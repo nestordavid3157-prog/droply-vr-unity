@@ -119,7 +119,7 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &258316899
+--- !u!1 &190293710
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -147,7 +147,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c92b50256f2422c4895739baf0a627e0, type: 3}
   m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Droply.Landscape.HeadsetPose
+  m_EditorClassIdentifier: Droply.Landscape.Runtime::Droply.Landscape.HeadsetPose
 --- !u!114 &190293713
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -159,7 +159,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a4fd2d9bf7514b98854fbe9f7fade58c, type: 3}
   m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Droply.Landscape.ViewerLocomotion
+  m_EditorClassIdentifier: Droply.Landscape.Runtime::Droply.Landscape.ViewerLocomotion
 --- !u!4 &190293712
 Transform:
   m_ObjectHideFlags: 0
@@ -194,28 +194,28 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &258316900
+--- !u!4 &1012121878
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 258316899}
+  m_GameObject: {fileID: 1012121877}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 1046192751}
+  m_Father: {fileID: 190293712}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!20 &258316901
+--- !u!20 &1012121879
 Camera:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 258316899}
+  m_GameObject: {fileID: 1012121877}
   m_Enabled: 1
   serializedVersion: 2
   m_ClearFlags: 1
@@ -260,7 +260,7 @@ Camera:
   m_OcclusionCulling: 1
   m_StereoConvergence: 10
   m_StereoSeparation: 0.022
---- !u!1 &721242662
+--- !u!1 &1089385832
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -268,8 +268,8 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 721242664}
-  - component: {fileID: 721242663}
+  - component: {fileID: 1089385834}
+  - component: {fileID: 1089385833}
   m_Layer: 0
   m_Name: Meadow Landscape
   m_TagString: Untagged
@@ -277,18 +277,18 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &721242663
+--- !u!114 &1089385833
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 721242662}
+  m_GameObject: {fileID: 1089385832}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b6fd8502bc2ea5d41b22b8564ba1cd08, type: 3}
   m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Droply.Landscape.LandscapeGenerator
+  m_EditorClassIdentifier: Droply.Landscape.Runtime::Droply.Landscape.LandscapeGenerator
   vertexColorShader: {fileID: 4800000, guid: 46f8891a74754318b4d65fc149c81b12, type: 3}
   litShader: {fileID: 4800000, guid: 933532a4fcc9baf4fa0491de14d08ed7, type: 3}
   unlitShader: {fileID: 4800000, guid: 650dd9526735d5b46b79224bc6e94025, type: 3}
@@ -298,7 +298,7 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 721242662}
+  m_GameObject: {fileID: 1089385832}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -307,67 +307,9 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1046192748
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1046192751}
-  - component: {fileID: 1046192750}
-  - component: {fileID: 1046192749}
-  m_Layer: 0
-  m_Name: Tracked viewpoint
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1046192749
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1046192748}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2b67977633f43254b802064e6841786f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Droply.Landscape.Runtime::Droply.Landscape.ComfortableLocomotion
---- !u!114 &1046192750
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1046192748}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c92b50256f2422c4895739baf0a627e0, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Droply.Landscape.Runtime::Droply.Landscape.HeadsetPose
---- !u!4 &1046192751
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1046192748}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children:
-  - {fileID: 258316900}
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 721242664}
-  - {fileID: 1046192751}
+  - {fileID: 1089385834}
+  - {fileID: 190293712}

@@ -3,20 +3,22 @@
   "rootNamespace": "Droply.Landscape.Tests",
   "references": [
     "Droply.Landscape.Runtime",
-    "Droply.Landscape.Editor"
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
   ],
   "includePlatforms": [
     "Editor"
   ],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
-  "overrideReferences": false,
-  "precompiledReferences": [],
-  "autoReferenced": false,
-  "defineConstraints": [],
-  "versionDefines": [],
-  "optionalUnityReferences": [
-    "TestAssemblies"
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll"
   ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "versionDefines": [],
   "noEngineReferences": false
 }
