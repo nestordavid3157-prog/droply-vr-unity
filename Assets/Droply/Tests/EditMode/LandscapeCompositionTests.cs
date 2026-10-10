@@ -1,12 +1,20 @@
 using System;
-using System.Linq;
+using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
 
 namespace Droply.Landscape.Tests
 {
+    /// <summary>
+    /// EditMode tests (Window > General > Test Runner > EditMode > Run All). They check inside Unity's own runtime what Tools/CompositionCheck checks
+    /// outside it: the composition rules, that the same seed gives the same landscape, that the light bake on all cores gives the colours of a bake on one,
+    /// and the walking rules. They also check the Unity side, which only Unity can run: that the generator creates the landscape objects.
+    /// </summary>
     public sealed class LandscapeCompositionTests
     {
+        /// <summary>The Quest's lowest refresh rate: the longest regular step.</summary>
+        const float Frame = 1f / 72f;
+
         GameObject root;
 
         [TearDown]
@@ -16,108 +24,82 @@ namespace Droply.Landscape.Tests
         }
 
         [Test]
-        public void CompositionHasExactlyOneBoundedCharacterGroup()
+        public void BuiltLandscapePassesEveryCompositionCheck()
         {
-            var trees = LandscapeGenerator.GetCharacterTreePositions();
-            Assert.That(LandscapeGenerator.TreeGroupCount, Is.InRange(4, 7));
-            Assert.That(trees.Length, Is.EqualTo(LandscapeGenerator.TreeGroupCount));
-            Assert.That(LandscapeGenerator.FlowerIslandCount, Is.InRange(4, 8));
-            Assert.That(LandscapeGenerator.ForegroundRockCount, Is.InRange(3, 6));
-            Assert.That(trees.Select(p => p.x).Distinct().Count(), Is.EqualTo(trees.Length));
+            List<string> violations = LandscapeChecks.Run(LandscapeBuilder.Build());
+            Assert.That(violations, Is.Empty, string.Join("\n", violations));
         }
 
         [Test]
-        public void PathIsWalkableWidthAndHasAtLeastThreeTurns()
+        public void SameSeedGivesTheSameLandscape()
         {
-            Assert.That(LandscapeGenerator.WalkablePathWidth, Is.InRange(2f, 3f));
-            Assert.That(LandscapeGenerator.PathDirectionChanges(), Is.GreaterThanOrEqualTo(3));
+            AssertSame(LandscapeBuilder.Build(), LandscapeBuilder.Build());
         }
 
         [Test]
-        public void PathUsesFeatheredVertexColorsAndTaperedUnseamedEnds()
+        public void BakeOnAllCoresGivesTheColoursOfABakeOnOne()
         {
-            Generate();
-            Mesh mesh = root.transform.Find("Generated Landscape/Curving sandy path").GetComponent<MeshFilter>().sharedMesh;
-            const int crossSections = 8;
-            const int steps = 240;
-            Assert.That(mesh.vertexCount, Is.EqualTo((steps + 1) * crossSections));
-            Assert.That(mesh.colors.Distinct().Count(), Is.GreaterThanOrEqualTo(4));
-            Assert.That(Vector3.Distance(mesh.vertices[3], mesh.vertices[4]), Is.LessThan(.001f));
-            Assert.That(Vector3.Distance(mesh.vertices[120 * crossSections + 3], mesh.vertices[120 * crossSections + 4]),
-                Is.InRange(2f, 3f));
-            Assert.That(Vector3.Distance(mesh.vertices[steps * crossSections + 3], mesh.vertices[steps * crossSections + 4]), Is.LessThan(.001f));
-            Assert.That(mesh.normals[120 * crossSections + 3].y, Is.GreaterThan(.8f));
+            AssertSame(LandscapeBuilder.Build(false), LandscapeBuilder.Build(true));
         }
 
         [Test]
-        public void GeneratedWorldHasNoProhibitedNamedContent()
-        {
-            Generate();
-            string[] prohibited = { "house", "building", "architecture", "furniture", "device", "sign", "text", "logo", "canvas", "ui" };
-            foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
-                Assert.That(prohibited.Any(term => child.name.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0),
-                    Is.False, "Prohibited world object: " + child.name);
-        }
-
-        [Test]
-        public void SeededLandscapeLayoutIsRepeatable()
-        {
-            var first = Generate();
-            string firstSignature = first.DeterministicSignature();
-            UnityEngine.Object.DestroyImmediate(root);
-            root = null;
-            var second = Generate();
-            string secondSignature = second.DeterministicSignature();
-            Assert.That(LandscapeGenerator.RandomSeed, Is.EqualTo(3157));
-            Assert.That(secondSignature, Is.EqualTo(firstSignature));
-        }
-
-        [Test]
-        public void LandscapeFitsEstimatedQuestGeometryAndDrawBudget()
-        {
-            var batches = Generate();
-            Debug.Log("Landscape budget estimate (not measured on Quest): " +
-                batches.EstimatedTriangleCount + " triangles, " + batches.EstimatedDrawCalls +
-                " draw calls, " + batches.EstimatedMaterialCount + " materials, " +
-                batches.BatchCount + " instanced batches.");
-            Assert.That(batches.AllMaterialsSupportInstancing, Is.True, "Every instanced material must opt in to instancing.");
-            Assert.That(batches.BatchCount, Is.LessThanOrEqualTo(LandscapeGenerator.EstimatedDrawCallBudget));
-            Assert.That(batches.EstimatedDrawCalls, Is.LessThanOrEqualTo(LandscapeGenerator.EstimatedDrawCallBudget));
-            Assert.That(batches.EstimatedTriangleCount, Is.LessThanOrEqualTo(LandscapeGenerator.EstimatedTriangleBudget));
-            Assert.That(batches.EstimatedMaterialCount, Is.LessThanOrEqualTo(20));
-            Assert.That(batches.NearLodInstanceCount, Is.GreaterThan(0));
-            Assert.That(batches.FarLodInstanceCount, Is.GreaterThan(0));
-        }
-
-        [Test]
-        public void SmoothGlideAndTeleportPreserveRigAndHeadsetHeight()
-        {
-            root = new GameObject("Tracked rig");
-            root.transform.position = new Vector3(3, 1.7f, -2);
-            var locomotion = root.AddComponent<ComfortableLocomotion>();
-            var camera = new GameObject("Tracked test camera");
-            camera.transform.SetParent(root.transform, false);
-            camera.transform.localPosition = new Vector3(0, 1.65f, 0);
-            float cameraHeight = camera.transform.localPosition.y;
-
-            locomotion.MoveLocal(Vector2.up, Quaternion.identity, 2f);
-            Assert.That(root.transform.position.y, Is.EqualTo(1.7f));
-            Assert.That(camera.transform.localPosition.y, Is.EqualTo(cameraHeight));
-            Assert.That(root.transform.position.z, Is.EqualTo(-2 + ComfortableLocomotion.GlideSpeed * 2f).Within(.0001f));
-
-            locomotion.TeleportTo(new Vector3(-12, 50, 21));
-            Assert.That(root.transform.position, Is.EqualTo(new Vector3(-12, 1.7f, 21)));
-            Assert.That(camera.transform.localPosition.y, Is.EqualTo(cameraHeight));
-        }
-
-        InstancedLandscape Generate()
+        public void GeneratorCreatesTheLandscapeAndNothingForbidden()
         {
             root = new GameObject("Test landscape");
             var generator = root.AddComponent<LandscapeGenerator>();
             generator.GenerateLandscape();
-            var generated = root.transform.Find("Generated Landscape");
-            Assert.That(generated, Is.Not.Null);
-            return generated.GetComponent<InstancedLandscape>();
+            Transform generated = root.transform.Find("Generated Landscape");
+            Assert.That(generated, Is.Not.Null, "no content root");
+            Assert.That(generated.Find("Ground"), Is.Not.Null, "no ground");
+            Assert.That(generated.Find("Sand path"), Is.Not.Null, "no path");
+            Assert.That(generator.WalkArea, Is.Not.Null, "no walk area for walking");
+            string[] forbidden = { "house", "building", "architecture", "furniture", "device", "sign", "text", "logo", "canvas" };
+            foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+                foreach (string term in forbidden)
+                    Assert.That(child.name.IndexOf(term, StringComparison.OrdinalIgnoreCase), Is.LessThan(0), "forbidden world object: " + child.name);
+        }
+
+        [Test]
+        public void WanderingNeverLeavesTheWalkAreaAndNeverJolts()
+        {
+            SceneData data = LandscapeBuilder.Build();
+            var rng = new Rng(77);
+            var walker = new Walker();
+            Vector2 head = new Vector2(0f, 0f), last = new Vector2(0f, 0f), stick = new Vector2(0f, 1f);
+            float yaw = 0f, until = 0f, worst = float.MinValue, worstJolt = 0f;
+            for (int i = 0; i < 72 * 120; i++)
+            {
+                float t = i * Frame;
+                if (t >= until) { yaw = rng.Range(-180f, 180f); stick = new Vector2(rng.Signed() * .3f, 1f) * rng.Range(.3f, 1f); until = t + rng.Range(1f, 4f); }
+                head += walker.Step(data.Walk, head, yaw, stick, Frame);
+                worst = Mathf.Max(worst, data.Walk.Distance(head));
+                worstJolt = Mathf.Max(worstJolt, (walker.Velocity - last).magnitude / Frame);
+                last = walker.Velocity;
+            }
+            Assert.That(worst, Is.LessThanOrEqualTo(0f), "left the walk area");
+            Assert.That(worstJolt, Is.LessThanOrEqualTo(Walker.MaxAcceleration * 1.01f), "acceleration in m/s²");
+        }
+
+        [Test]
+        public void SnapTurnTurnsOncePerPush()
+        {
+            var walker = new Walker();
+            float[] stick = { 0f, .8f, .9f, .6f, .5f, .2f, .75f, 0f, -1f, -1f };
+            float[] want = { 0f, 30f, 0f, 0f, 0f, 0f, 30f, 0f, -30f, 0f };
+            for (int i = 0; i < stick.Length; i++) Assert.That(walker.Turn(stick[i]), Is.EqualTo(want[i]), "step " + i);
+        }
+
+        static void AssertSame(SceneData a, SceneData b)
+        {
+            Assert.That(b.Layers.Count, Is.EqualTo(a.Layers.Count), "layers");
+            for (int l = 0; l < a.Layers.Count; l++)
+            {
+                MeshData x = a.Layers[l].Mesh, y = b.Layers[l].Mesh;
+                string name = a.Layers[l].Name;
+                Assert.That(y.Vertices, Is.EqualTo(x.Vertices), name + ": vertices");
+                Assert.That(y.Triangles, Is.EqualTo(x.Triangles), name + ": triangles");
+                Assert.That(y.Colors, Is.EqualTo(x.Colors), name + ": baked colours");
+            }
         }
     }
 }

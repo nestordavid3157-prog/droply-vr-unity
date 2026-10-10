@@ -46,6 +46,7 @@ namespace Droply.Landscape
             GenerateLandscape();
         }
 
+        /// <summary>Builds the landscape under this object (once; does nothing if it is already there). Also called by the editor menu and the EditMode tests.</summary>
         public void GenerateLandscape()
         {
             if (transform.Find("Generated Landscape") != null) return;
@@ -88,17 +89,6 @@ namespace Droply.Landscape
                 if (layer.Material == Mat.Sky) skyDome = t;
                 else if (layer.Material == Mat.SunDisc) sunDisc = t;
             }
-
-            float farStart = TreeLodDistance;
-            Material farLeaves = z > 125 ? leavesFarLight : z > 85 ? leavesFar : leavesDark;
-            TaperedBranch("Tree trunk LOD1", center, center + Vector3.up * height * .62f, .28f * scale, .1f * scale, trunk, 5, false, farStart, 0);
-            Vector3 farCrown = center + Vector3.up * height * .72f;
-            float farScale = scale * (.88f + .035f * (variant % 4));
-            Ellipsoid("Canopy LOD1", farCrown, new Vector3(2.2f, 1.8f, 2.1f) * farScale,
-                farLeaves, false, 6, farStart, 0);
-            if (variant % 2 == 0)
-                Ellipsoid("Canopy LOD1 overlap", farCrown + new Vector3((variant % 3 - 1) * .32f, .22f, .14f),
-                    new Vector3(1.6f, 1.5f, 1.7f) * farScale, farLeaves, false, 6, farStart, 0);
         }
 
         /// <summary>The sky is at infinity: the dome and the sun move with the eye, so walking never brings them closer or lets the far plane cut into them.</summary>

@@ -1,4 +1,3 @@
-using System;
 using System.IO;
 using Droply.Landscape;
 using UnityEditor;
@@ -169,7 +168,7 @@ namespace Droply.Editor
         public static void Validate()
         {
             var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-            var generators = Object.FindObjectsByType<LandscapeGenerator>();
+            var generators = Object.FindObjectsByType<LandscapeGenerator>(FindObjectsSortMode.None);
             if (generators.Length != 1) throw new BuildFailedException("Expected exactly one landscape generator, found " + generators.Length);
             // The composition rules (open foreground, clear path, one grouped tree group, no tree rows, open sight corridors, relief, calm palette, budget)
             // are measured on the same data the player builds. The same checks run outside Unity: dotnet run --project Tools/CompositionCheck
@@ -180,9 +179,9 @@ namespace Droply.Editor
             if (Camera.main == null) throw new BuildFailedException("Starting viewpoint camera is missing.");
             if (generators[0].vertexColorShader == null || !generators[0].vertexColorShader.isSupported)
                 throw new BuildFailedException("The vertex colour shader is missing or not supported: run \"Droply > Generate and configure landscape\" (or assign " + BakedShaderPath + " to the generator).");
-            var poses = Object.FindObjectsByType<HeadsetPose>();
+            var poses = Object.FindObjectsByType<HeadsetPose>(FindObjectsSortMode.None);
             if (poses.Length != 1) throw new BuildFailedException("The main viewpoint must use headset tracking.");
-            if (Object.FindObjectsByType<ComfortableLocomotion>().Length != 1) throw new BuildFailedException("The tracked rig must have exactly one locomotion controller.");
+            if (Object.FindObjectsByType<ViewerLocomotion>(FindObjectsSortMode.None).Length != 1) throw new BuildFailedException("The tracked rig must have exactly one locomotion controller (ViewerLocomotion).");
             if (poses[0].transform.localPosition != Vector3.zero) throw new BuildFailedException("The tracked camera rig must not impose a headset height.");
             if (poses[0].transform.parent == null || poses[0].transform.parent.GetComponent<ViewerLocomotion>() == null)
                 throw new BuildFailedException("The tracked camera must sit inside a tracking space with ViewerLocomotion (walking and snap turns): run \"Droply > Generate and configure landscape\".");
@@ -212,6 +211,8 @@ namespace Droply.Editor
 
             var previousPosition = camera.transform.position;
             var previousRotation = camera.transform.rotation;
+            var previousEye = camera.stereoTargetEye;
+            float previousFieldOfView = camera.fieldOfView;
             var previousTarget = camera.targetTexture;
             var previousActive = RenderTexture.active;
             var previousSkybox = RenderSettings.skybox;
@@ -222,7 +223,7 @@ namespace Droply.Editor
             var renderTexture = new RenderTexture(1280, 720, 24, RenderTextureFormat.ARGB32);
             var image = new Texture2D(1280, 720, TextureFormat.RGB24, false);
             Transform generated = null;
-            string output = Environment.GetEnvironmentVariable("DROPLY_REVIEW_OUTPUT");
+            string output = System.Environment.GetEnvironmentVariable("DROPLY_REVIEW_OUTPUT");
             if (string.IsNullOrWhiteSpace(output)) output = Path.Combine(Path.GetTempPath(), "droply-landscape-review");
             Directory.CreateDirectory(output);
             try
@@ -230,11 +231,10 @@ namespace Droply.Editor
                 generator.GenerateLandscape();
                 generated = generator.transform.Find("Generated Landscape");
                 if (generated == null) throw new BuildFailedException("Landscape generation did not create its content root.");
-                generated.GetComponent<InstancedLandscape>().SendMessage("LateUpdate");
                 camera.stereoTargetEye = StereoTargetEyeMask.None;
                 camera.fieldOfView = 68;
-                camera.transform.position = new Vector3(0, 1.65f, -5);
-                camera.transform.LookAt(new Vector3(0, 1, 44));
+                camera.transform.position = new Vector3(0, 1.65f, 0);   // the start: eye height on the level standing spot, looking along the path
+                camera.transform.LookAt(new Vector3(0, 1.65f, 40));
                 camera.targetTexture = renderTexture;
                 camera.Render();
                 RenderTexture.active = renderTexture;
@@ -257,6 +257,8 @@ namespace Droply.Editor
             {
                 camera.targetTexture = previousTarget;
                 camera.transform.SetPositionAndRotation(previousPosition, previousRotation);
+                camera.stereoTargetEye = previousEye;
+                camera.fieldOfView = previousFieldOfView;
                 RenderTexture.active = previousActive;
                 if (generated != null) Object.DestroyImmediate(generated.gameObject);
                 RenderSettings.skybox = previousSkybox;
